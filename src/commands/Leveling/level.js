@@ -118,7 +118,7 @@ export default {
                     xpRange: { min: xpMin, max: xpMax },
                     xpCooldown: xpCooldown,
                     levelUpMessage: message,
-                    announceLevelUp: true,
+                    announceLevelUp: false,
                 };
 
                 await saveLevelingConfig(client, interaction.guildId, newConfig);
