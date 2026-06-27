@@ -29,10 +29,7 @@ export default {
           await channel.send(`
 # 🍫 **HAUNTED CHOCOLATIER CÓ CẬP NHẬT MỚI TỪ CONCERNEDAPE!**
 
-ConcernedApe vừa đăng bài chia sẻ mới về quá trình phát triển **Haunted Chocolatier**.
-
-🔗 Xem bài viết:
-https://www.hauntedchocolatier.net/2026/06/25/still-here-still-grinding/
+ConcernedApe vừa đăng bài chia sẻ mới về quá trình phát triển *Haunted Chocolatier*. Xem bài viết [tại đây](https://www.hauntedchocolatier.net/2026/06/25/still-here-still-grinding/).
 
 <@&1514301732274962452>
           `);
