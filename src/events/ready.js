@@ -2,7 +2,11 @@ import { Events } from "discord.js";
 import { logger, startupLog } from "../utils/logger.js";
 import config from "../config/application.js";
 import { reconcileReactionRoleMessages } from "../services/reactionRoleService.js";
-import { reconcileTicketPanels, reconcileVerificationPanels, reconcileReactionRolePanelHealth } from "../services/panelHealthService.js";
+import {
+  reconcileTicketPanels,
+  reconcileVerificationPanels,
+  reconcileReactionRolePanelHealth,
+} from "../services/panelHealthService.js";
 import { reconcileLevelRoles } from "../services/levelRoleSyncService.js";
 
 export default {
@@ -16,6 +20,17 @@ export default {
       startupLog(`Ready! Logged in as ${client.user.tag}`);
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
       startupLog(`Loaded ${client.commands.size} commands`);
+
+      // Gửi thông báo khi bot khởi động
+      try {
+        const channel = await client.channels.fetch("1510183614535569448");
+
+        if (channel?.isTextBased()) {
+          await channel.send("Test 1");
+        }
+      } catch (error) {
+        logger.error("Failed to send startup announcement:", error);
+      }
 
       const reconciliationSummary = await reconcileReactionRoleMessages(client);
       startupLog(
