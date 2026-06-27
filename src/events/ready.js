@@ -9,6 +9,9 @@ import {
 } from "../services/panelHealthService.js";
 import { reconcileLevelRoles } from "../services/levelRoleSyncService.js";
 
+// Bật/Tắt gửi thông báo khi bot khởi động
+const ENABLE_STARTUP_ANNOUNCEMENT = false;
+
 export default {
   name: Events.ClientReady,
   once: true,
@@ -21,17 +24,21 @@ export default {
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
       startupLog(`Loaded ${client.commands.size} commands`);
 
-      // Gửi thông báo khi bot khởi động
-      try {
-        const channel = await client.channels.fetch("1414831863851253883");
+      // Gửi thông báo khi bot khởi động (nếu được bật)
+      if (ENABLE_STARTUP_ANNOUNCEMENT) {
+        try {
+          const channel = await client.channels.fetch("1510183614535569448");
 
-        if (channel?.isTextBased()) {
-          await channel.send(`Chat cũng hông bít, hihi!`);
+          if (channel?.isTextBased()) {
+            await channel.send(`Nothing...`);
 
-          startupLog("Startup announcement sent successfully.");
+            startupLog("Startup announcement sent successfully.");
+          } else {
+            logger.warn("Startup announcement channel is not a text channel.");
+          }
+        } catch (error) {
+          logger.error("Failed to send startup announcement:", error);
         }
-      } catch (error) {
-        logger.error("Failed to send startup announcement:", error);
       }
 
       const reconciliationSummary = await reconcileReactionRoleMessages(client);
@@ -51,11 +58,13 @@ export default {
 
       const reactionRolePanelSummary =
         await reconcileReactionRolePanelHealth(client);
+
       startupLog(
         `Reaction role panel health: scanned ${reactionRolePanelSummary.scannedPanels} panels, healthy ${reactionRolePanelSummary.healthyPanels}, deleted ${reactionRolePanelSummary.deletedPanels}, missing channel ${reactionRolePanelSummary.missingChannels}, recovered ${reactionRolePanelSummary.recoveredIds}, errors ${reactionRolePanelSummary.errors}`
       );
 
       const levelRoleSummary = await reconcileLevelRoles(client);
+
       startupLog(
         `Level role sync: scanned ${levelRoleSummary.scannedGuilds} guilds, pruned ${levelRoleSummary.prunedRewardEntries} stale rewards, re-awarded ${levelRoleSummary.rolesReAwarded} roles, errors ${levelRoleSummary.errors}`
       );
