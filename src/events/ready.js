@@ -26,13 +26,18 @@ export default {
         const channel = await client.channels.fetch("1510183614535569448");
 
         if (channel?.isTextBased()) {
-          await channel.send("# 🍫 **HAUNTED CHOCOLATIER CÓ CẬP NHẬT MỚI TỪ CONCERNEDAPE!**
+          await channel.send(`
+# 🍫 **HAUNTED CHOCOLATIER CÓ CẬP NHẬT MỚI TỪ CONCERNEDAPE!**
 
 ConcernedApe vừa đăng bài chia sẻ mới về quá trình phát triển **Haunted Chocolatier**.
 
-🔗 Xem bài viết: https://www.hauntedchocolatier.net/2026/06/25/still-here-still-grinding/
+🔗 Xem bài viết:
+https://www.hauntedchocolatier.net/2026/06/25/still-here-still-grinding/
 
-<@&1514301732274962452>");
+<@&1514301732274962452>
+          `);
+
+          startupLog("Startup announcement sent successfully.");
         }
       } catch (error) {
         logger.error("Failed to send startup announcement:", error);
@@ -53,7 +58,8 @@ ConcernedApe vừa đăng bài chia sẻ mới về quá trình phát triển **
         `Verification panel health: scanned ${verificationPanelSummary.scannedGuilds} guilds, healthy ${verificationPanelSummary.healthyPanels}, deleted ${verificationPanelSummary.deletedPanels}, missing channel ${verificationPanelSummary.missingChannels}, recovered ${verificationPanelSummary.recoveredIds}, errors ${verificationPanelSummary.errors}`
       );
 
-      const reactionRolePanelSummary = await reconcileReactionRolePanelHealth(client);
+      const reactionRolePanelSummary =
+        await reconcileReactionRolePanelHealth(client);
       startupLog(
         `Reaction role panel health: scanned ${reactionRolePanelSummary.scannedPanels} panels, healthy ${reactionRolePanelSummary.healthyPanels}, deleted ${reactionRolePanelSummary.deletedPanels}, missing channel ${reactionRolePanelSummary.missingChannels}, recovered ${reactionRolePanelSummary.recoveredIds}, errors ${reactionRolePanelSummary.errors}`
       );
