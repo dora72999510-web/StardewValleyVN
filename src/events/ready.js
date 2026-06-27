@@ -23,16 +23,10 @@ export default {
 
       // Gửi thông báo khi bot khởi động
       try {
-        const channel = await client.channels.fetch("1510172846649770086");
+        const channel = await client.channels.fetch("1414831863851253883");
 
         if (channel?.isTextBased()) {
-          await channel.send(`
-# 🍫 **HAUNTED CHOCOLATIER VỪA CÓ THÔNG BÁO MỚI!**
-
-ConcernedApe vừa đăng bài chia sẻ mới về quá trình phát triển *Haunted Chocolatier*. Xem bài viết [tại đây](https://www.hauntedchocolatier.net/2026/06/25/still-here-still-grinding/).
-
-<@&1514301732274962452>
-          `);
+          await channel.send(`Chat cũng hông bít, hihi!`);
 
           startupLog("Startup announcement sent successfully.");
         }
