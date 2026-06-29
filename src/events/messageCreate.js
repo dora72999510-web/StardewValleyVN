@@ -57,10 +57,8 @@ export default {
     try {
       if (!message.guild || message.author.bot) return;
 
-      logger.debug(
-        `[MSG] ${message.author.tag}: ${message.content}`
-      );
-      await handleAutoRole(message);
+      await handleAutoRole(message); // 👈 đặt ở đây
+      
       /* 1. Protected Channels (HIGHEST PRIORITY) */
       if (await handleProtectedChannels(message)) return;
 
