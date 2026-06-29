@@ -10,7 +10,7 @@ import {
 import { reconcileLevelRoles } from "../services/levelRoleSyncService.js";
 
 // Bật/Tắt gửi thông báo khi bot khởi động
-const ENABLE_STARTUP_ANNOUNCEMENT = false;
+const ENABLE_STARTUP_ANNOUNCEMENT = true;
 
 export default {
   name: Events.ClientReady,
@@ -27,10 +27,11 @@ export default {
       // Gửi thông báo khi bot khởi động (nếu được bật)
       if (ENABLE_STARTUP_ANNOUNCEMENT) {
         try {
-          const channel = await client.channels.fetch("1510183614535569448");
+          const channel = await client.channels.fetch("1521007503263928341");
 
           if (channel?.isTextBased()) {
-            await channel.send(`Nothing...`);
+            await channel.send(`# 🚫 Kênh Lọc Spam
+Mọi tin nhắn gửi trong kênh này sẽ tự động bị xóa và người gửi sẽ bị timeout.`);
 
             startupLog("Startup announcement sent successfully.");
           } else {
