@@ -125,7 +125,7 @@ async function handleProtectedChannels(message) {
         createEmbed({
           title: '🚫 Bạn đã bị timeout',
           description:
-            `Bạn đã gửi nội dung vào kênh cảnh báo.\n` +
+            `Bạn đã gửi tin trong kênh cảnh báo.\n` +
             `Hình phạt: **1 ngày timeout**.`,
           color: 'error',
         }),
@@ -139,7 +139,7 @@ async function handleProtectedChannels(message) {
 
     if (logChannel?.isTextBased()) {
       await logChannel.send(
-        `🚫 ${member} đã bị timeout do gửi tin nhắn vào <#1521007503263928341>`
+        `🚫 ${member} đã bị timeout do gửi nội dung vào <#1521007503263928341>`
       );
     }
 
