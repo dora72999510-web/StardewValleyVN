@@ -35,131 +35,126 @@ import {
   recordCorrectCount,
 } from '../services/countingGameService.js';
 
-const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
-const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
+/* =========================
+   CONFIG
+========================= */
+const XP_RATE_LIMIT_ATTEMPTS = 12;
+const XP_RATE_LIMIT_WINDOW_MS = 10000;
 
 const PROTECTED_CHANNELS = ['1521007503263928341'];
-
 const EXEMPT_ROLE_IDS = ['1510657849112399928', '1514302887419842590'];
 
 const PROTECTED_TIMEOUT = 24 * 60 * 60 * 1000;
 
+/* =========================
+   EVENT
+========================= */
 export default {
   name: Events.MessageCreate,
 
   async execute(message, client) {
     try {
-      if (message.author.bot || !message.guild) return;
+      if (!message.guild || message.author.bot) return;
 
       logger.debug(
-        `Message received from ${message.author.tag}: ${message.content}`
+        `[MSG] ${message.author.tag}: ${message.content}`
       );
 
+      /* 1. Protected Channels (HIGHEST PRIORITY) */
       if (await handleProtectedChannels(message)) return;
+
+      /* 2. Counting Game */
       if (await handleCountingGame(message, client)) return;
 
+      /* 3. Prefix Commands */
       await handlePrefixCommand(message, client);
+
+      /* 4. Leveling System */
       await handleLeveling(message, client);
 
-    } catch (error) {
-      logger.error('Error in messageCreate event:', error);
+    } catch (err) {
+      logger.error('MessageCreate Error:', err);
     }
   },
 };
 
 /* =========================
-   PREFIX COMMAND
+   PROTECTED CHANNELS
 ========================= */
-async function handlePrefixCommand(message, client) {
+async function handleProtectedChannels(message) {
   try {
-    const guildConfig = await getGuildConfig(client, message.guild.id);
-
-    const prefix =
-      guildConfig?.prefix ||
-      client.config?.bot?.prefix ||
-      '!';
-
-    const parsed = parsePrefixCommand(message.content, prefix);
-    if (!parsed) return;
-
-    const { commandName, args } = parsed;
-
-    const resolvedCommandName = resolveCommandAlias(commandName);
-    const command = client.commands.get(resolvedCommandName);
-
-    if (!command) return;
-
-    const restriction = getPrefixRestriction(
-      command,
-      args,
-      resolveSubcommandAlias
-    );
-
-    if (!supportsPrefixExecution(command) || restriction.blocked) {
-      if (restriction.reason) {
-        await message.channel.send({
-          embeds: [
-            createEmbed({
-              title: 'Slash Command Only',
-              description: `${restriction.reason}\nUse \`/${resolvedCommandName}\` instead.`,
-              color: 'info',
-            }),
-          ],
-        }).catch(() => {});
-      }
-      return;
+    if (!PROTECTED_CHANNELS.includes(message.channel.id)) {
+      return false;
     }
 
-    const enabled = await isCommandEnabled(
-      client,
-      message.guild.id,
-      resolvePrefixAccessKey(command.data, args),
-      command.category
-    );
+    const member = await message.guild.members
+      .fetch(message.author.id)
+      .catch(() => null);
 
-    if (!enabled) {
-      await message.channel.send({
-        embeds: [
-          createEmbed({
-            title: 'Command Disabled',
-            description: 'This command has been disabled for this server.',
-            color: 'error',
-          }),
-        ],
-      }).catch(() => {});
-      return;
+    if (!member) return true;
+
+    // Bypass permissions
+    if (
+      member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+      member.permissions.has(PermissionsBitField.Flags.ManageMessages) ||
+      member.roles.cache.some(r => EXEMPT_ROLE_IDS.includes(r.id))
+    ) {
+      return true;
     }
 
-    const abuse = await enforceAbuseProtection(
-      { guildId: message.guild.id, user: message.author },
-      command,
-      resolvedCommandName
-    );
+    // Delete message
+    await message.delete().catch(() => {});
 
-    if (!abuse.allowed) {
-      await message.channel.send({
-        embeds: [
-          createEmbed({
-            title: 'Command Cooldown',
-            description: `Please wait **${formatCooldownDuration(abuse.remainingMs)}**`,
-            color: 'error',
-          }),
-        ],
-      }).catch(() => {});
-      return;
+    // CHECK moderatable (QUAN TRỌNG)
+    if (!member.moderatable) {
+      logger.warn(`Cannot timeout ${member.user.tag} (role hierarchy issue)`);
+      return true;
     }
 
-    await executePrefixCommand(
-      command,
-      message,
-      args,
-      client,
-      prefix,
-      guildConfig
+    // Timeout
+    await member.timeout(
+      PROTECTED_TIMEOUT,
+      'Message in protected channel'
     );
+
+    logger.warn(`Timeout applied to ${member.user.tag}`);
+
+    // DM user
+    await member.send({
+      embeds: [
+        createEmbed({
+          title: '🚫 Bạn đã bị timeout',
+          description:
+            `Bạn đã gửi tin trong kênh cảnh báo.\n` +
+            `Hình phạt: **1 ngày timeout**.`,
+          color: 'error',
+        }),
+      ],
+    }).catch(() => {});
+
+    // Log channel
+    const logChannel = await message.guild.channels
+      .fetch('1510183155762597990')
+      .catch(() => null);
+
+    if (logChannel?.isTextBased()) {
+      await logChannel.send(
+        `🚫 ${member.user.tag} bị timeout trong #${message.channel.name}`
+      );
+    }
+
+    // Warning message
+    const warn = await message.channel.send(
+      `🚫 ${member} đã bị timeout 1 ngày.`
+    );
+
+    setTimeout(() => warn.delete().catch(() => {}), 5000);
+
+    return true;
 
   } catch (err) {
-    logger.error('Prefix command error:', err);
+    logger.error('Protected Channel Error:', err);
+    return true;
   }
 }
 
@@ -174,7 +169,10 @@ async function handleCountingGame(message, client) {
       return false;
     }
 
-    const valid = isValidCountingMessage(message.content.trim(), config);
+    const valid = isValidCountingMessage(
+      message.content.trim(),
+      config
+    );
 
     const invalid =
       !valid || message.author.id === config.lastUserId;
@@ -207,8 +205,104 @@ async function handleCountingGame(message, client) {
     return true;
 
   } catch (err) {
-    logger.error('Counting game error:', err);
+    logger.error('Counting Game Error:', err);
     return false;
+  }
+}
+
+/* =========================
+   PREFIX COMMANDS
+========================= */
+async function handlePrefixCommand(message, client) {
+  try {
+    const guildConfig = await getGuildConfig(client, message.guild.id);
+
+    const prefix =
+      guildConfig?.prefix ||
+      client.config?.bot?.prefix ||
+      '!';
+
+    const parsed = parsePrefixCommand(message.content, prefix);
+    if (!parsed) return;
+
+    const { commandName, args } = parsed;
+
+    const resolvedName = resolveCommandAlias(commandName);
+    const command = client.commands.get(resolvedName);
+
+    if (!command) return;
+
+    const restriction = getPrefixRestriction(
+      command,
+      args,
+      resolveSubcommandAlias
+    );
+
+    if (!supportsPrefixExecution(command) || restriction.blocked) {
+      if (restriction.reason) {
+        await message.channel.send({
+          embeds: [
+            createEmbed({
+              title: 'Slash Only',
+              description: `${restriction.reason}\nUse \`/${resolvedName}\``,
+              color: 'info',
+            }),
+          ],
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    const enabled = await isCommandEnabled(
+      client,
+      message.guild.id,
+      resolvePrefixAccessKey(command.data, args),
+      command.category
+    );
+
+    if (!enabled) {
+      await message.channel.send({
+        embeds: [
+          createEmbed({
+            title: 'Disabled',
+            description: 'Command is disabled on this server.',
+            color: 'error',
+          }),
+        ],
+      }).catch(() => {});
+      return;
+    }
+
+    const abuse = await enforceAbuseProtection(
+      { guildId: message.guild.id, user: message.author },
+      command,
+      resolvedName
+    );
+
+    if (!abuse.allowed) {
+      await message.channel.send({
+        embeds: [
+          createEmbed({
+            title: 'Cooldown',
+            description: `Wait **${formatCooldownDuration(abuse.remainingMs)}**`,
+            color: 'error',
+          }),
+        ],
+      }).catch(() => {});
+      return;
+    }
+
+    await executePrefixCommand(
+      command,
+      message,
+      args,
+      client,
+      prefix,
+      guildConfig
+    );
+
+  } catch (err) {
+    logger.error('Prefix Command Error:', err);
   }
 }
 
@@ -221,8 +315,8 @@ async function handleLeveling(message, client) {
 
     const allowed = await checkRateLimit(
       key,
-      MESSAGE_XP_RATE_LIMIT_ATTEMPTS,
-      MESSAGE_XP_RATE_LIMIT_WINDOW_MS
+      XP_RATE_LIMIT_ATTEMPTS,
+      XP_RATE_LIMIT_WINDOW_MS
     );
 
     if (!allowed) return;
@@ -236,95 +330,37 @@ async function handleLeveling(message, client) {
     const member = message.member;
     if (member?.roles.cache.some(r => config.ignoredRoles?.includes(r.id))) return;
 
-    const last = (await getUserLevelData(client, message.guild.id, message.author.id))
-      ?.lastMessage || 0;
+    const userData = await getUserLevelData(
+      client,
+      message.guild.id,
+      message.author.id
+    );
 
-    if (Date.now() - last < (config.xpCooldown || 60) * 1000) return;
+    const last = userData?.lastMessage || 0;
+    const cooldown = (config.xpCooldown || 60) * 1000;
+
+    if (Date.now() - last < cooldown) return;
 
     const min = config.xpRange?.min ?? 15;
     const max = config.xpRange?.max ?? 25;
 
-    let xp = Math.floor(Math.random() * (max - min + 1)) + min;
+    const xp =
+      Math.floor(Math.random() * (max - min + 1)) + min;
 
-    if (config.xpMultiplier > 1) {
-      xp = Math.floor(xp * config.xpMultiplier);
-    }
-
-    const result = await addXp(client, message.guild, message.member, xp);
+    const result = await addXp(
+      client,
+      message.guild,
+      message.member,
+      xp
+    );
 
     if (result?.leveledUp) {
-      logger.info(`${message.author.tag} leveled up to ${result.level}`);
+      logger.info(
+        `${message.author.tag} leveled up to ${result.level}`
+      );
     }
 
   } catch (err) {
-    logger.error('Leveling error:', err);
-  }
-}
-
-/* =========================
-   PROTECTED CHANNELS
-========================= */
-async function handleProtectedChannels(message) {
-  try {
-    if (!PROTECTED_CHANNELS.includes(message.channel.id)) {
-      return true;
-    }
-
-    const member = message.member;
-    if (!member) return true;
-
-    if (
-      member.permissions.has(PermissionsBitField.Flags.Administrator) ||
-      member.permissions.has(PermissionsBitField.Flags.ManageMessages) ||
-      member.roles.cache.some(r => EXEMPT_ROLE_IDS.includes(r.id))
-    ) {
-      return true;
-    }
-
-    await message.delete().catch(() => {});
-
-    if (
-      member.communicationDisabledUntilTimestamp &&
-      member.communicationDisabledUntilTimestamp > Date.now()
-    ) {
-      return true;
-    }
-
-    await member.timeout(
-      PROTECTED_TIMEOUT,
-      'Message in protected channel'
-    );
-
-    const embed = createEmbed({
-      title: '🚫 Bạn đã bị timeout',
-      description:
-        `Bạn đã gửi tin trong kênh cảnh báo.\n` +
-        `Hình phạt: 1 ngày timeout.`,
-      color: '#ec1515',
-    });
-
-    await member.send({ embeds: [embed] }).catch(() => {});
-
-    const logChannel = await message.guild.channels
-      .fetch('1510183155762597990')
-      .catch(() => null);
-
-    if (logChannel?.isTextBased()) {
-      logChannel.send(
-        `🚫 ${member.user.tag} bị timeout trong ${message.channel.name}`
-      ).catch(() => {});
-    }
-
-    const warn = await message.channel.send(
-      `🚫 ${member} đã bị xử lý.`
-    );
-
-    setTimeout(() => warn.delete().catch(() => {}), 5000);
-
-    return true;
-
-  } catch (err) {
-    logger.error('Protected channel error:', err);
-    return true;
+    logger.error('Leveling Error:', err);
   }
 }
