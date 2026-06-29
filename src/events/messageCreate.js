@@ -139,7 +139,7 @@ async function handleProtectedChannels(message) {
 
     if (logChannel?.isTextBased()) {
       await logChannel.send(
-        `🚫 ${member} bị timeout trong <#1521007503263928341>`
+        `🚫 ${member} bị timeout vì đã gửi tin nhắn vào <#1521007503263928341>`
       );
     }
 
