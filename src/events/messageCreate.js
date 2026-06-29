@@ -537,6 +537,17 @@ await member.send({
     }),
   ],
 }).catch(() => {});
+
+    // Gửi log đến kênh admin
+const logChannel = await message.guild.channels
+  .fetch('1510183155762597990') // Thay bằng ID kênh log của bạn
+  .catch(() => null);
+
+if (logChannel?.isTextBased()) {
+  await logChannel.send({
+    content: `🚫 ${member} đã bị timeout vì gửi tin nhắn trong ${message.channel}.`,
+  });
+}
     /**
      * Thông báo
      */
