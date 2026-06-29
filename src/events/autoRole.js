@@ -2,9 +2,9 @@ import { PermissionsBitField } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { createEmbed } from '../utils/embeds.js';
 
-const TARGET_CHANNEL_ID = '1521104570795692162';
+const TARGET_CHANNEL_ID = '1521119945801334896';
 const TARGET_ROLE_ID = '1521105636790636564';
-const KEYWORD = 'Nhận role 2026';
+const KEYWORD = 'Chúc mừng 2026';
 
 const grantedCache = new Set();
 
