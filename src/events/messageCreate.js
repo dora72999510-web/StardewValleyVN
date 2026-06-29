@@ -5,7 +5,8 @@ import { getLevelingConfig, getUserLevelData } from '../services/leveling.js';
 import { addXp } from '../services/xpSystem.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
-import { handleAutoRole } from './autoRole.js';
+import { handleAutoRole } from '../events/autoRole.js';
+console.log('AUTO ROLE TYPE:', typeof handleAutoRole);
 
 import {
   supportsPrefixExecution,
