@@ -1,7 +1,7 @@
 async function handleProtectedChannels(message) {
   try {
     if (!PROTECTED_CHANNELS.includes(message.channel.id)) {
-      return false;
+      return true;
     }
 
     const member = await message.guild.members
