@@ -5,6 +5,7 @@ import { getLevelingConfig, getUserLevelData } from '../services/leveling.js';
 import { addXp } from '../services/xpSystem.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
+import { handleAutoRole } from './autoRole.js';
 
 import {
   supportsPrefixExecution,
@@ -59,7 +60,7 @@ export default {
       logger.debug(
         `[MSG] ${message.author.tag}: ${message.content}`
       );
-
+      await handleAutoRole(message);
       /* 1. Protected Channels (HIGHEST PRIORITY) */
       if (await handleProtectedChannels(message)) return;
 
