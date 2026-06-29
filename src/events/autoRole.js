@@ -2,9 +2,9 @@ import { PermissionsBitField } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { createEmbed } from '../utils/embeds.js';
 
-const TARGET_CHANNEL_ID = '1510183614535569448';
-const TARGET_ROLE_ID = '1516035792256892959';
-const KEYWORD = 'nhận role';
+const TARGET_CHANNEL_ID = '1521104570795692162';
+const TARGET_ROLE_ID = '1521105636790636564';
+const KEYWORD = 'Nhận role 2026';
 
 const grantedCache = new Set();
 
@@ -32,9 +32,17 @@ export async function handleAutoRole(message) {
 
     await member.roles.add(role);
 
-    await member.send(`🎉 Bạn đã được cấp role ${role.name}`).catch(() => {});
+     await member.send({
+      embeds: [
+        createEmbed({
+          title: '🎉 Bạn đã được cấp role!',
+          description: `Bạn đã nhập đúng từ khóa và được cấp **${role.name}**`,
+          color: 'success',
+        }),
+      ],
+    }).catch(() => {});
 
-    await message.channel.send(`✅ ${member} đã được cấp role`).catch(() => {});
+    await message.channel.send(`✅ ${member} đã được cấp role **${role.name}**`).catch(() => {});
 
   } catch (err) {
     console.error(err);
