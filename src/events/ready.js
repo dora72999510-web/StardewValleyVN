@@ -31,7 +31,7 @@ export default {
 
           if (channel?.isTextBased()) {
             await channel.send(`# 🚫 Kênh Lọc Spam
-Mọi tin nhắn gửi trong kênh này sẽ tự động bị xóa và người gửi sẽ bị timeout. Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ Admin để được hỗ trợ xử lý. Trong trường hợp cố tình vi phạm, hệ thống sẽ ghi nhận cảnh cáo. Nếu tái phạm đến lần thứ 3, tài khoản sẽ bị __ban vĩnh viễn__ khỏi máy chủ mà không cần thông báo trước.`);
+Mọi tin nhắn gửi trong kênh này sẽ tự động bị xóa và người gửi sẽ bị hạn chế trong vòng 1 ngày. Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ Admin để được hỗ trợ xử lý. Trong trường hợp cố tình vi phạm, hệ thống sẽ ghi nhận cảnh cáo. Nếu tái phạm đến lần thứ 3, tài khoản sẽ bị __**cấm vĩnh viễn**__ khỏi máy chủ mà không cần thông báo trước.`);
 
             startupLog("Startup announcement sent successfully.");
           } else {
