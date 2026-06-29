@@ -364,3 +364,103 @@ async function handleLeveling(message, client) {
     logger.error('Leveling Error:', err);
   }
 }
+
+import { PermissionsBitField } from 'discord.js';
+import { createEmbed } from '../utils/embeds.js';
+import { logger } from '../utils/logger.js';
+
+/**
+ * CONFIG
+ */
+const TARGET_CHANNEL_ID = '1510183614535569448';   // kênh chỉ định
+const TARGET_ROLE_ID = '1516035792256892959';         // role muốn cấp
+const KEYWORD = 'nhận role bear';                  // từ khóa kích hoạt
+
+// chống cấp lại (in-memory fallback)
+const grantedCache = new Set();
+
+export default {
+  name: 'messageCreate',
+
+  async execute(message) {
+    try {
+      if (!message.guild || message.author.bot) return;
+
+      // chỉ hoạt động trong channel chỉ định
+      if (message.channel.id !== TARGET_CHANNEL_ID) return;
+
+      const content = message.content.trim().toLowerCase();
+
+      // check keyword
+      if (content !== KEYWORD.toLowerCase()) return;
+
+      const member = await message.guild.members
+        .fetch(message.author.id)
+        .catch(() => null);
+
+      if (!member) return;
+
+      // chống cấp lại (RAM cache)
+      if (grantedCache.has(member.id)) return;
+
+      // nếu đã có role rồi → không cấp lại
+      if (member.roles.cache.has(TARGET_ROLE_ID)) {
+        grantedCache.add(member.id);
+        return;
+      }
+
+      // check permission bot
+      const botMember = await message.guild.members.fetchMe();
+      if (!botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+        logger.error('Bot thiếu quyền Manage Roles');
+        return;
+      }
+
+      const role = message.guild.roles.cache.get(TARGET_ROLE_ID);
+      if (!role) {
+        logger.error('Không tìm thấy role');
+        return;
+      }
+
+      // role hierarchy check
+      if (role.position >= botMember.roles.highest.position) {
+        logger.error('Role bot thấp hơn role cần cấp');
+        return;
+      }
+
+      // add role
+      await member.roles.add(role);
+
+      grantedCache.add(member.id);
+
+      logger.info(`Auto-role granted to ${member.user.tag}`);
+
+      // DM user
+      await member.send({
+        embeds: [
+          createEmbed({
+            title: '🎉 Nhận role miễn phí thành công!',
+            description:
+              `Bạn đã nhập đúng từ khóa trong kênh <#${message.channel.id}>.\n` +
+              `Bạn đã được cấp role **${role.name}**.`,
+            color: 'success',
+          }),
+        ],
+      }).catch(() => {
+        logger.warn(`Không thể DM ${member.user.tag}`);
+      });
+
+      // confirm trong channel (tuỳ chọn)
+      const confirmMsg = await message.channel.send(
+        `✅ ${member} bạn đã được cấp role **${role.name}**`
+      );
+
+      setTimeout(() => {
+        confirmMsg.delete().catch(() => {});
+      }, 5000);
+
+    } catch (err) {
+      logger.error('Auto-role error:', err);
+    }
+  },
+};
