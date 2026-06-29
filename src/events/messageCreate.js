@@ -55,10 +55,23 @@ export default {
   name: Events.MessageCreate,
 
   async execute(message, client) {
-    try {
-      if (!message.guild || message.author.bot) return;
+  try {
+    if (!message.guild || message.author.bot) return;
 
-      logger.debug(`[MSG] ${message.author.tag}: ${message.content}`);
+    console.log('MESSAGE EVENT FIRED');
+
+    await handleAutoRole(message); // ⚠️ QUAN TRỌNG
+
+    if (await handleProtectedChannels(message)) return;
+    if (await handleCountingGame(message, client)) return;
+
+    await handlePrefixCommand(message, client);
+    await handleLeveling(message, client);
+
+  } catch (err) {
+    logger.error('MessageCreate Error:', err);
+  }
+}
 
       /* 0. AUTO ROLE (THÊM Ở ĐẦU, KHÔNG ẢNH HƯỞNG TIMEOUT) */
       await handleAutoRole(message);
