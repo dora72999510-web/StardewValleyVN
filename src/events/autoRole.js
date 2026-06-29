@@ -36,7 +36,7 @@ export async function handleAutoRole(message) {
       embeds: [
         createEmbed({
           title: '🎉 Bạn đã được cấp role!',
-          description: `Bạn đã nhập đúng từ khóa và được cấp **${role.name}**`,
+          description: `Bạn đã nhập đúng từ khóa và nhận được **${role.name}**`,
           color: 'success',
         }),
       ],
