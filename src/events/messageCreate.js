@@ -123,10 +123,10 @@ async function handleProtectedChannels(message) {
     await member.send({
       embeds: [
         createEmbed({
-          title: '🚫 Bạn đã bị timeout',
+          title: '🚫 Bạn đã bị hạn chế',
           description:
             `Bạn đã gửi tin trong kênh cảnh báo.\n` +
-            `Hình phạt: **1 ngày timeout**.`,
+            `Hình phạt: **hạn chế 1 ngày**.`,
           color: 'error',
         }),
       ],
@@ -139,13 +139,13 @@ async function handleProtectedChannels(message) {
 
     if (logChannel?.isTextBased()) {
       await logChannel.send(
-        `🚫 ${member} đã bị timeout do gửi nội dung vào <#1521007503263928341>`
+        `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày do gửi nội dung vào <#1521007503263928341>`
       );
     }
 
     // Warning message
     const warn = await message.channel.send(
-      `🚫 ${member} đã bị timeout 1 ngày.`
+      `🚫 ${member} đã bị hạn chế 1 ngày.`
     );
 
     setTimeout(() => warn.delete().catch(() => {}), 5000);
