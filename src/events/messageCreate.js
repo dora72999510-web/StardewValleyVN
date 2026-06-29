@@ -525,16 +525,25 @@ async function handleProtectedChannels(message) {
     logger.warn(
       `${member.user.tag} has been timed out for sending a message in #${message.channel.name}`,
     );
-
+await member.send({
+  embeds: [
+    createEmbed({
+      title: '🚫 Bạn đã bị timeout',
+      description:
+        `Bạn đã gửi tin nhắn trong **${message.channel.name}**, đây là kênh cảnh báo.\n\n` +
+        `**Hình phạt:** Timeout 1 ngày.\n\n` +
+        `Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ đội ngũ quản trị sau khi hết thời gian timeout.`,
+      color: 'error',
+    }),
+  ],
+}).catch(() => {});
     /**
      * Thông báo
      */
     const embed = createEmbed({
-      title: '🚫 Protected Channel',
-      description:
-        `${member} đã bị **timeout 7 ngày** vì gửi tin nhắn trong kênh này.`,
-      color: 'error',
-    });
+const warningMessage = await message.channel.send({
+    content: `🚫 ${member} đã bị xử lý vì gửi tin nhắn trong kênh cảnh báo.`,
+});
 
     const warningMessage =
       await message.channel
