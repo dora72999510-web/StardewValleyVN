@@ -10,7 +10,7 @@ import {
 import { reconcileLevelRoles } from "../services/levelRoleSyncService.js";
 
 // Bật/Tắt gửi thông báo khi bot khởi động
-const ENABLE_STARTUP_ANNOUNCEMENT = false;
+const ENABLE_STARTUP_ANNOUNCEMENT = true;
 
 export default {
   name: Events.ClientReady,
@@ -27,11 +27,10 @@ export default {
       // Gửi thông báo khi bot khởi động (nếu được bật)
       if (ENABLE_STARTUP_ANNOUNCEMENT) {
         try {
-          const channel = await client.channels.fetch("1521007503263928341");
+          const channel = await client.channels.fetch("1414831863851253883");
 
           if (channel?.isTextBased()) {
-            await channel.send(`# 🚫 Kênh Lọc Spam
-Mọi tin nhắn gửi trong kênh này sẽ tự động bị xóa và người gửi sẽ bị hạn chế trong vòng 1 ngày. Nếu bạn cho rằng đây là nhầm lẫn, vui lòng liên hệ Admin để được hỗ trợ xử lý. Trong trường hợp cố tình vi phạm, hệ thống sẽ ghi nhận cảnh cáo. Nếu tái phạm đến lần thứ 3, tài khoản sẽ bị __**cấm vĩnh viễn**__ khỏi máy chủ mà không cần thông báo trước.`);
+            await channel.send(`<@1255397023230726174> chơi lét hăm`);
 
             startupLog("Startup announcement sent successfully.");
           } else {
