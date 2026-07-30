@@ -24,6 +24,10 @@ export async function handleFaq(message) {
     const args = message.content.trim().split(/\s+/);
 
     const key = args[1]?.toLowerCase();
+    console.log(message.content);
+    console.log(args);
+    console.log("KEY =", key);
+    console.log("FAQ =", Object.keys(FAQ));
 
     const target = message.mentions.users.first();
 
