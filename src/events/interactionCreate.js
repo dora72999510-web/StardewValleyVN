@@ -38,6 +38,16 @@ export default {
 
         if (interaction.isChatInputCommand()) {
           try {
+            // ===== Disable Slash Commands =====
+            const slashCommandsEnabled = false;
+            
+            if (!slashCommandsEnabled) {
+              return interaction.reply({
+                content: '❌ Slash Command hiện đang bị vô hiệu hóa.',
+                flags: MessageFlags.Ephemeral
+              });
+            }
+            // ================================
             logger.info(`Command executed: /${interaction.commandName} by ${interaction.user.tag}`, {
               event: 'interaction.command.received',
               traceId: interactionTraceContext.traceId,
