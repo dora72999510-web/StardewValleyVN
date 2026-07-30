@@ -6,6 +6,7 @@ import { addXp } from '../services/xpSystem.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { handleAutoRole } from '../events/autoRole.js';
+import { handleFaq } from '../events/faqResponder.js';
 console.log('AUTO ROLE TYPE:', typeof handleAutoRole);
 
 import {
