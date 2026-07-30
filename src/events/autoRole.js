@@ -8,7 +8,12 @@ const KEYWORD = 'Chúc mừng 2026';
 
 const grantedCache = new Set();
 
+const AUTO_ROLE_ENABLED = false;
+
 export async function handleAutoRole(message) {
+  // Tắt hoàn toàn tính năng auto role
+  if (!AUTO_ROLE_ENABLED) return;
+
   try {
     if (!message.guild || message.author.bot) return;
     if (message.channel.id !== TARGET_CHANNEL_ID) return;
@@ -32,7 +37,7 @@ export async function handleAutoRole(message) {
 
     await member.roles.add(role);
 
-     await member.send({
+    await member.send({
       embeds: [
         createEmbed({
           title: '🎉 Bạn đã được cấp role!',
@@ -43,7 +48,6 @@ export async function handleAutoRole(message) {
     }).catch(() => {});
 
     await message.channel.send(`✅ ${member} đã được cấp role **${role.name}**`).catch(() => {});
-
   } catch (err) {
     console.error(err);
   }
