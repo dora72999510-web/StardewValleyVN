@@ -4,7 +4,7 @@ const ALLOWED_ROLES = [
 ];
 
 const FAQ = {
-    hotro1: `Chào bạn!
+    baoloi: `Chào bạn!
 
 Vui lòng đọc kỹ hướng dẫn...
 Nếu vẫn gặp lỗi hãy gửi log SMAPI.`,
