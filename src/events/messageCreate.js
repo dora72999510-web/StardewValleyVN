@@ -60,6 +60,12 @@ export default {
       if (!message.guild || message.author.bot) return;
 
       await handleAutoRole(message); // 👈 đặt ở đây
+
+      // FAQ
+      if (await handleFaq(message)) return;
+
+      // Protected Channels
+      if (await handleProtectedChannels(message)) return;
       
       /* 1. Protected Channels (HIGHEST PRIORITY) */
       if (await handleProtectedChannels(message)) return;
