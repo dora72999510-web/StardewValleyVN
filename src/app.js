@@ -4,7 +4,7 @@ import {
   Client,
   Collection,
   GatewayIntentBits,
-  Routes
+  Routes,
 } from 'discord.js';
 
 import { REST } from '@discordjs/rest';
@@ -18,14 +18,10 @@ import { initializeDatabase } from './utils/database.js';
 import {
   getServerCounters,
   saveServerCounters,
-  updateCounter
+  updateCounter,
 } from './services/serverstatsService.js';
 
-import {
-  logger,
-  startupLog,
-  shutdownLog
-} from './utils/logger.js';
+import { logger, startupLog, shutdownLog } from './utils/logger.js';
 
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
@@ -36,14 +32,20 @@ import pkg from '../package.json' with { type: 'json' };
 
 import {
   EXPECTED_SCHEMA_VERSION,
-  EXPECTED_SCHEMA_LABEL
+  EXPECTED_SCHEMA_LABEL,
 } from './config/schemaVersion.js';
 
+
+/* =========================================================
+   TITAN BOT
+========================================================= */
 
 class TitanBot extends Client {
 
   constructor() {
+
     super({
+
       intents: [
 
         GatewayIntentBits.Guilds,
@@ -60,16 +62,19 @@ class TitanBot extends Client {
 
         GatewayIntentBits.GuildVoiceStates,
 
-        GatewayIntentBits.GuildBans
+        GatewayIntentBits.GuildBans,
 
-      ]
+      ],
+
     });
+
+
+    /* =====================================================
+       BASIC PROPERTIES
+    ===================================================== */
 
     this.config = config;
 
-    /*
-     * Prefix commands vẫn sử dụng client.commands
-     */
     this.commands = new Collection();
 
     this.events = new Collection();
@@ -84,16 +89,103 @@ class TitanBot extends Client {
 
     this.db = null;
 
-    /*
-     * REST client dùng cho việc XÓA Slash Commands.
-     *
-     * Không dùng REST này để đăng ký lại command.
-     */
+
+    /* =====================================================
+       DISCORD REST
+    ===================================================== */
+
     this.rest = new REST({
-      version: '10'
+      version: '10',
     }).setToken(
       config.bot.token
     );
+
+
+    /* =====================================================
+       SILENT DEVELOPER COMMAND
+       -----------------------------------------------------
+       /nha-phat-trien
+
+       Command này chỉ dùng để Discord hiển thị một
+       Slash Command duy nhất.
+
+       Khi người dùng Enter:
+
+       - Không gửi message vào channel.
+       - Không chạy command trong client.commands.
+       - Không thực hiện hành động khác.
+    ===================================================== */
+
+    this.on(
+      'interactionCreate',
+      async (interaction) => {
+
+        try {
+
+          if (
+            !interaction.isChatInputCommand()
+          ) {
+            return;
+          }
+
+
+          if (
+            interaction.commandName !==
+            'nha-phat-trien'
+          ) {
+            return;
+          }
+
+
+          /*
+           * Discord yêu cầu interaction phải được
+           * acknowledge trong thời gian giới hạn.
+           *
+           * ephemeral = true:
+           * reply chỉ thuộc về người sử dụng.
+           */
+
+          await interaction.deferReply({
+            ephemeral: true,
+          });
+
+
+          /*
+           * Xóa reply ngay lập tức.
+           *
+           * Kết quả:
+           * người dùng nhấn Enter nhưng bot không
+           * để lại message nào trong channel.
+           */
+
+          await interaction.deleteReply()
+            .catch(() => {});
+
+
+          logger.debug(
+            `Developer command used by ${interaction.user.tag}`
+          );
+
+
+        } catch (error) {
+
+          /*
+           * Interaction có thể đã được handler khác
+           * xử lý hoặc đã hết hạn.
+           *
+           * Không để lỗi này làm crash bot.
+           */
+
+          logger.debug(
+            'Developer command interaction ignored:',
+            error?.message || error
+          );
+
+        }
+
+      }
+    );
+
   }
 
 
@@ -109,11 +201,17 @@ class TitanBot extends Client {
         'Starting TitanBot...'
       );
 
+
+      /* =====================================================
+         SMALL STARTUP DELAY
+      ===================================================== */
+
       await new Promise(
-        resolve => setTimeout(
-          resolve,
-          1000
-        )
+        resolve =>
+          setTimeout(
+            resolve,
+            1000
+          )
       );
 
 
@@ -125,18 +223,26 @@ class TitanBot extends Client {
         'Initializing database...'
       );
 
+
       const dbInstance =
         await initializeDatabase();
+
 
       this.db =
         dbInstance.db;
 
 
+      /* =====================================================
+         DATABASE STATUS
+      ===================================================== */
+
       const dbStatus =
         this.db.getStatus();
 
 
-      if (dbStatus.isDegraded) {
+      if (
+        dbStatus.isDegraded
+      ) {
 
         logger.warn('');
 
@@ -193,24 +299,27 @@ class TitanBot extends Client {
       /* =====================================================
          LOAD PREFIX COMMANDS
          -----------------------------------------------------
-         QUAN TRỌNG:
+         Quan trọng:
 
-         Phần này KHÔNG bị xóa.
-
-         Các command như:
+         Phần này VẪN GIỮ.
 
          !ban
          !warn
          !clearuser
+         ...
 
-         vẫn cần client.commands.
+         vẫn được load vào client.commands.
       ===================================================== */
 
       startupLog(
         'Loading commands...'
       );
 
-      await loadCommands(this);
+
+      await loadCommands(
+        this
+      );
+
 
       startupLog(
         `Commands loaded: ${this.commands.size}`
@@ -225,7 +334,9 @@ class TitanBot extends Client {
         'Loading handlers...'
       );
 
+
       await this.loadHandlers();
+
 
       startupLog(
         'Handlers loaded'
@@ -240,9 +351,11 @@ class TitanBot extends Client {
         'Logging into Discord...'
       );
 
+
       await this.login(
         this.config.bot.token
       );
+
 
       startupLog(
         'Discord login successful'
@@ -250,25 +363,41 @@ class TitanBot extends Client {
 
 
       /* =====================================================
-         DISABLE SLASH COMMANDS
-         -----------------------------------------------------
-         KHÔNG đăng ký command.
-
-         Chỉ xóa command cũ.
+         SLASH COMMAND
       ===================================================== */
+
+      /*
+       * Không gọi commandLoader.registerCommands().
+       *
+       * Chỉ thiết lập:
+       *
+       * /nha-phat-trien
+       *
+       */
 
       await this.disableSlashCommands();
 
 
+      startupLog(
+        'Slash command setup completed.'
+      );
+
+
       /* =====================================================
-         ONLINE
+         DATABASE MODE
       ===================================================== */
 
       const databaseMode =
         dbStatus.isDegraded
+
           ? 'Optional in-memory mode (data resets after restart)'
+
           : 'Connected (persistent data enabled)';
 
+
+      /* =====================================================
+         HANDLER SUMMARY
+      ===================================================== */
 
       const handlerSummary =
         `${this.buttons.size} buttons, ` +
@@ -287,6 +416,7 @@ class TitanBot extends Client {
 
       this.setupCronJobs();
 
+
     } catch (error) {
 
       logger.error(
@@ -302,15 +432,14 @@ class TitanBot extends Client {
 
 
   /* =========================================================
-     DISABLE SLASH COMMANDS
+     SLASH COMMAND SETUP
      ---------------------------------------------------------
-     Hàm này:
+     Chỉ giữ:
 
-     1. Xóa Global Slash Commands
-     2. Xóa Guild Slash Commands
-     3. KHÔNG đăng ký lại
+     /nha-phat-trien
+     Tên tác giả
 
-     Prefix Commands ! vẫn hoạt động.
+     Các Slash Command cũ sẽ bị xóa.
   ========================================================= */
 
   async disableSlashCommands() {
@@ -325,7 +454,7 @@ class TitanBot extends Client {
       if (!applicationId) {
 
         logger.warn(
-          '⚠️ Không tìm thấy Application ID. Không thể xóa Slash Commands.'
+          '⚠️ Không tìm thấy Application ID.'
         );
 
         return;
@@ -334,34 +463,64 @@ class TitanBot extends Client {
 
 
       startupLog(
-        '🧹 Disabling all Slash Commands...'
+        '🧹 Cleaning old Slash Commands...'
       );
 
 
       /* =====================================================
-         GLOBAL COMMANDS
+         COMMAND DUY NHẤT
+      ===================================================== */
+
+      const developerCommand = {
+
+        name:
+          'phát triển bởi (developed by)',
+
+        description:
+          'honganhrose',
+
+        type:
+          1,
+
+        dm_permission:
+          false,
+
+        options:
+          [],
+
+      };
+
+
+      /* =====================================================
+         GLOBAL COMMAND
       ===================================================== */
 
       try {
 
         await this.rest.put(
+
           Routes.applicationCommands(
             applicationId
           ),
+
           {
-            body: []
+            body: [
+              developerCommand,
+            ],
           }
+
         );
 
 
-        startupLog(
-          '✅ Global Slash Commands removed.'
+        logger.info(
+          '✅ Global /nha-phat-trien registered.'
         );
+
 
       } catch (error) {
 
         logger.error(
-          '❌ Failed to remove Global Slash Commands:',
+          '❌ Failed to register global developer command:',
           error
         );
 
@@ -370,6 +529,9 @@ class TitanBot extends Client {
 
       /* =====================================================
          GUILD COMMANDS
+         -----------------------------------------------------
+         Xóa command cũ trong từng server và giữ lại
+         duy nhất /nha-phat-trien.
       ===================================================== */
 
       let guilds;
@@ -381,14 +543,10 @@ class TitanBot extends Client {
           await this.guilds.fetch();
 
 
-        startupLog(
-          `🔎 Found ${guilds.size} guild(s) to clean Slash Commands.`
-        );
-
       } catch (error) {
 
         logger.error(
-          '❌ Failed to fetch guilds while removing Slash Commands:',
+          '❌ Failed to fetch guilds:',
           error
         );
 
@@ -397,25 +555,33 @@ class TitanBot extends Client {
       }
 
 
-      let successCount = 0;
+      let successCount =
+        0;
 
-      let failedCount = 0;
+      let failedCount =
+        0;
 
 
       for (
-        const guild of guilds.values()
+        const guild
+        of guilds.values()
       ) {
 
         try {
 
           await this.rest.put(
+
             Routes.applicationGuildCommands(
               applicationId,
               guild.id
             ),
+
             {
-              body: []
+              body: [
+                developerCommand,
+              ],
             }
+
           );
 
 
@@ -423,7 +589,7 @@ class TitanBot extends Client {
 
 
           logger.info(
-            `✅ Slash Commands removed from ${guild.name} (${guild.id})`
+            `✅ /nha-phat-trien installed in ${guild.name} (${guild.id})`
           );
 
 
@@ -433,7 +599,7 @@ class TitanBot extends Client {
 
 
           logger.error(
-            `❌ Failed to remove Slash Commands from ${guild.name} (${guild.id}):`,
+            `❌ Failed to install developer command in ${guild.name}:`,
             error
           );
 
@@ -443,19 +609,16 @@ class TitanBot extends Client {
 
 
       startupLog(
-        `✅ Slash Commands disabled. Guilds: ${successCount} removed, ${failedCount} failed.`
-      );
-
-
-      logger.info(
-        '🚫 Slash Command registration is disabled.'
+        `✅ Slash Commands configured. ` +
+        `Guilds success: ${successCount}, ` +
+        `failed: ${failedCount}`
       );
 
 
     } catch (error) {
 
       logger.error(
-        '❌ Unexpected error while disabling Slash Commands:',
+        '❌ Error configuring Slash Commands:',
         error
       );
 
@@ -542,7 +705,8 @@ class TitanBot extends Client {
 
 
         if (
-          req.method === 'OPTIONS'
+          req.method ===
+          'OPTIONS'
         ) {
 
           return res.sendStatus(
@@ -559,7 +723,7 @@ class TitanBot extends Client {
 
 
     /* =====================================================
-       RATE LIMIT
+       API RATE LIMIT
     ===================================================== */
 
     const requestCounts =
@@ -587,7 +751,8 @@ class TitanBot extends Client {
 
 
         const windowStart =
-          now - windowMs;
+          now -
+          windowMs;
 
 
         if (
@@ -607,7 +772,8 @@ class TitanBot extends Client {
             .get(ip)
             .filter(
               t =>
-                t > windowStart
+                t >
+                windowStart
             );
 
 
@@ -620,7 +786,7 @@ class TitanBot extends Client {
             .status(429)
             .json({
               error:
-                'Too many requests'
+                'Too many requests',
             });
 
         }
@@ -655,7 +821,7 @@ class TitanBot extends Client {
           this.db?.getStatus?.() ||
           {
             isDegraded:
-              'unknown'
+              'unknown',
           };
 
 
@@ -681,9 +847,9 @@ class TitanBot extends Client {
               dbStatus.isDegraded,
 
             type:
-              dbStatus.connectionType
+              dbStatus.connectionType,
 
-          }
+          },
 
         };
 
@@ -707,9 +873,11 @@ class TitanBot extends Client {
         const dbStatus =
           this.db?.getStatus?.() ||
           {
-            isDegraded: true,
+            isDegraded:
+              true,
+
             connectionType:
-              'none'
+              'none',
           };
 
 
@@ -721,11 +889,14 @@ class TitanBot extends Client {
         const metrics = {
 
           guildCount:
-            this.guilds?.cache?.size ??
+            this.guilds
+              ?.cache
+              ?.size ??
             0,
 
           commandCount:
-            this.commands?.size ??
+            this.commands
+              ?.size ??
             0,
 
           database: {
@@ -738,7 +909,7 @@ class TitanBot extends Client {
 
             degradedReason:
               dbStatus.degradedReason ??
-              null
+              null,
 
           },
 
@@ -746,12 +917,14 @@ class TitanBot extends Client {
             EXPECTED_SCHEMA_VERSION,
 
           schemaLabel:
-            EXPECTED_SCHEMA_LABEL
+            EXPECTED_SCHEMA_LABEL,
 
         };
 
 
-        if (isReady) {
+        if (
+          isReady
+        ) {
 
           return res
             .status(200)
@@ -763,7 +936,7 @@ class TitanBot extends Client {
               message:
                 'Bot is ready',
 
-              metrics
+              metrics,
 
             });
 
@@ -782,7 +955,7 @@ class TitanBot extends Client {
                 ? 'Bot not Ready'
                 : 'Database degraded',
 
-            metrics
+            metrics,
 
           });
 
@@ -810,7 +983,7 @@ class TitanBot extends Client {
 
             timestamp:
               new Date()
-                .toISOString()
+                .toISOString(),
 
           });
 
@@ -866,7 +1039,7 @@ class TitanBot extends Client {
 
         server.on(
           'error',
-          error => {
+          (error) => {
 
             const errorCode =
               error?.code ||
@@ -887,7 +1060,8 @@ class TitanBot extends Client {
             ) {
 
               const nextPort =
-                port + 1;
+                port +
+                1;
 
 
               startupLog(
@@ -935,7 +1109,9 @@ class TitanBot extends Client {
               !hasStartedListening
             ) {
 
-              process.exit(1);
+              process.exit(
+                1
+              );
 
             }
 
@@ -987,16 +1163,19 @@ class TitanBot extends Client {
 
 
   /* =========================================================
-     UPDATE COUNTERS
+     UPDATE SERVER COUNTERS
   ========================================================= */
 
   async updateAllCounters() {
 
-    if (!this.db) {
+    if (
+      !this.db
+    ) {
 
       logger.warn(
         'Database not available for counter updates'
       );
+
 
       return;
 
@@ -1006,8 +1185,9 @@ class TitanBot extends Client {
     for (
       const [
         guildId,
-        guild
-      ] of this.guilds.cache
+        guild,
+      ]
+      of this.guilds.cache
     ) {
 
       try {
@@ -1045,7 +1225,9 @@ class TitanBot extends Client {
               );
 
 
-            if (channel) {
+            if (
+              channel
+            ) {
 
               validCounters.push(
                 counter
@@ -1057,6 +1239,7 @@ class TitanBot extends Client {
                 guild,
                 counter
               );
+
 
             } else {
 
@@ -1076,6 +1259,10 @@ class TitanBot extends Client {
         }
 
 
+        /* =================================================
+           SAVE CLEANED COUNTERS
+        ================================================= */
+
         if (
           orphanedCounters.length >
           0
@@ -1093,6 +1280,7 @@ class TitanBot extends Client {
           );
 
         }
+
 
       } catch (error) {
 
@@ -1122,16 +1310,26 @@ class TitanBot extends Client {
     const handlers = [
 
       {
-        path: 'events',
-        type: 'default',
-        required: true
+        path:
+          'events',
+
+        type:
+          'default',
+
+        required:
+          true,
       },
 
       {
-        path: 'interactions',
-        type: 'default',
-        required: true
-      }
+        path:
+          'interactions',
+
+        type:
+          'default',
+
+        required:
+          true,
+      },
 
     ];
 
@@ -1158,11 +1356,12 @@ class TitanBot extends Client {
           handler.type.startsWith(
             'named:'
           )
+
             ? module[
-                handler.type.split(
-                  ':'
-                )[1]
+                handler.type
+                  .split(':')[1]
               ]
+
             : module.default;
 
 
@@ -1180,6 +1379,7 @@ class TitanBot extends Client {
             `✅ Loaded ${handler.path}`
           );
 
+
         } else {
 
           throw new Error(
@@ -1187,6 +1387,7 @@ class TitanBot extends Client {
           );
 
         }
+
 
       } catch (error) {
 
@@ -1202,6 +1403,7 @@ class TitanBot extends Client {
 
           throw error;
 
+
         } else if (
           error.code !==
           'MODULE_NOT_FOUND'
@@ -1215,6 +1417,37 @@ class TitanBot extends Client {
         }
 
       }
+
+    }
+
+  }
+
+
+  /* =========================================================
+     REGISTER COMMANDS
+     ---------------------------------------------------------
+     Hàm này vẫn tồn tại để tránh code khác trong project
+     bị lỗi nếu gọi bot.registerCommands().
+
+     Nhưng nó KHÔNG đăng ký các command trong
+     client.commands.
+
+     Nó chỉ đăng ký /nha-phat-trien.
+  ========================================================= */
+
+  async registerCommands() {
+
+    try {
+
+      await this.disableSlashCommands();
+
+
+    } catch (error) {
+
+      logger.error(
+        'Error registering developer command:',
+        error
+      );
 
     }
 
@@ -1251,9 +1484,9 @@ class TitanBot extends Client {
 
     try {
 
-      /* =====================================================
+      /* ===================================================
          STOP CRON
-      ===================================================== */
+      =================================================== */
 
       logger.info(
         'Stopping cron jobs...'
@@ -1273,9 +1506,9 @@ class TitanBot extends Client {
       );
 
 
-      /* =====================================================
+      /* ===================================================
          DATABASE
-      ===================================================== */
+      =================================================== */
 
       if (
         this.db &&
@@ -1302,6 +1535,7 @@ class TitanBot extends Client {
 
           }
 
+
         } catch (error) {
 
           logger.warn(
@@ -1314,9 +1548,9 @@ class TitanBot extends Client {
       }
 
 
-      /* =====================================================
+      /* ===================================================
          DISCORD
-      ===================================================== */
+      =================================================== */
 
       logger.info(
         'Destroying Discord client...'
@@ -1335,6 +1569,7 @@ class TitanBot extends Client {
           logger.info(
             '✅ Discord client destroyed'
           );
+
 
         } catch (error) {
 
@@ -1358,7 +1593,10 @@ class TitanBot extends Client {
       );
 
 
-      process.exit(0);
+      process.exit(
+        0
+      );
+
 
     } catch (error) {
 
@@ -1368,7 +1606,9 @@ class TitanBot extends Client {
       );
 
 
-      process.exit(1);
+      process.exit(
+        1
+      );
 
     }
 
@@ -1378,7 +1618,7 @@ class TitanBot extends Client {
 
 
 /* =========================================================
-   BOT INITIALIZATION
+   CREATE BOT
 ========================================================= */
 
 try {
@@ -1386,6 +1626,10 @@ try {
   const bot =
     new TitanBot();
 
+
+  /* =======================================================
+     SHUTDOWN HANDLERS
+  ======================================================= */
 
   const setupShutdown =
     () => {
@@ -1408,9 +1652,13 @@ try {
       );
 
 
+      /* ===================================================
+         UNCAUGHT EXCEPTION
+      =================================================== */
+
       process.on(
         'uncaughtException',
-        error => {
+        (error) => {
 
           logger.error(
             'Uncaught Exception:',
@@ -1426,6 +1674,10 @@ try {
       );
 
 
+      /* ===================================================
+         UNHANDLED REJECTION
+      =================================================== */
+
       process.on(
         'unhandledRejection',
         (
@@ -1436,6 +1688,10 @@ try {
           const code =
             reason?.code;
 
+
+          /*
+           * Discord interaction errors có thể recover.
+           */
 
           if (
             code === 10062 ||
@@ -1476,9 +1732,13 @@ try {
   setupShutdown();
 
 
+  /* =======================================================
+     START
+  ======================================================= */
+
   bot.start()
     .catch(
-      error => {
+      (error) => {
 
         logger.error(
           'Fatal error during bot startup:',
@@ -1502,9 +1762,15 @@ try {
   );
 
 
-  process.exit(1);
+  process.exit(
+    1
+  );
 
 }
 
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 export default TitanBot;
