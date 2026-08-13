@@ -1,8 +1,8 @@
 import { Events, PermissionsBitField } from 'discord.js';
 import { logger } from '../utils/logger.js';
 
-const DELETE_DELAY = 5;
-const MAX_FETCH = 300;
+const DELETE_DELAY = 150;
+const MAX_FETCH = 100;
 const MAX_RETRIES = 5;
 
 export default {
