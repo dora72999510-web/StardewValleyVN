@@ -480,7 +480,7 @@ function prepareCommandsForRegistration(
 
    App.js của bạn vẫn có thể gọi:
 
-       await this.registerCommands();
+       await this.();
 
    nhưng hàm này KHÔNG đăng ký command.
 
@@ -490,143 +490,85 @@ function prepareCommandsForRegistration(
    3. Không đăng ký lại.
 ========================================================= */
 
-export async function registerCommands(
-    client,
-    options = {}
-) {
+export async function registerCommands(client, options = {}) {
     try {
         const clientId =
             options.clientId ||
-            client.application?.id ||
             client.user?.id;
 
         if (!clientId) {
             logger.error(
-                '[COMMANDS] Không tìm thấy CLIENT_ID / Application ID.'
+                '[COMMANDS] Không tìm thấy Client ID.'
             );
-
             return;
         }
 
-        if (!client.rest) {
-            logger.error(
-                '[COMMANDS] Discord REST client không khả dụng.'
-            );
+        const developerCommand = {
+            name: 'phát triển bởi (developed by)',
+            description: 'honganhrose',
+            type: 1,
+            dm_permission: false,
+            options: [],
+        };
 
-            return;
-        }
-
-        logger.warn(
-            '=================================================='
+        logger.info(
+            '[COMMANDS] Đang đăng ký /nha-phat-trien...'
         );
 
-        logger.warn(
-            '[COMMANDS] SLASH COMMANDS ĐÃ BỊ VÔ HIỆU HÓA'
+        /*
+         * GLOBAL
+         */
+        await client.rest.put(
+            `/applications/${clientId}/commands`,
+            {
+                body: [
+                    developerCommand,
+                ],
+            }
         );
 
-        logger.warn(
-            '=================================================='
+        logger.info(
+            '[COMMANDS] Đã đăng ký Global /nha-phat-trien.'
         );
 
-        /* =================================================
-           GLOBAL COMMANDS
-        ================================================= */
+        /*
+         * GUILD
+         *
+         * Dùng guild command để Discord cập nhật gần như
+         * ngay lập tức trong server.
+         */
+        const guilds =
+            client.guilds.cache;
 
-        try {
-            logger.info(
-                '[COMMANDS] Đang xóa Global Slash Commands...'
-            );
+        for (const guild of guilds.values()) {
 
-            await client.rest.put(
-                Routes.applicationCommands(
-                    clientId
-                ),
-                {
-                    body: []
-                }
-            );
-
-            logger.info(
-                '[COMMANDS] Đã xóa Global Slash Commands.'
-            );
-
-        } catch (error) {
-            logger.error(
-                '[COMMANDS] Lỗi xóa Global Slash Commands:',
-                error
-            );
-        }
-
-        /* =================================================
-           GUILD COMMANDS
-        ================================================= */
-
-        let guilds;
-
-        try {
-            guilds =
-                await client.guilds.fetch();
-
-            logger.info(
-                `[COMMANDS] Bot đang ở ${guilds.size} server.`
-            );
-
-        } catch (error) {
-            logger.error(
-                '[COMMANDS] Không thể lấy danh sách server:',
-                error
-            );
-
-            return;
-        }
-
-        let successCount = 0;
-        let failedCount = 0;
-
-        for (
-            const guild
-            of guilds.values()
-        ) {
             try {
-                await client.rest.put(
-                    Routes.applicationGuildCommands(
-                        clientId,
-                        guild.id
-                    ),
-                    {
-                        body: []
-                    }
-                );
 
-                successCount++;
+                await guild.commands.set([
+                    developerCommand,
+                ]);
 
                 logger.info(
-                    `[COMMANDS] Đã xóa Slash Commands tại ${guild.name} (${guild.id})`
+                    `[COMMANDS] Đã đăng ký /nha-phat-trien tại ${guild.name}`
                 );
 
             } catch (error) {
-                failedCount++;
 
                 logger.error(
-                    `[COMMANDS] Không thể xóa Slash Commands tại ${guild.name} (${guild.id}):`,
+                    `[COMMANDS] Không thể đăng ký command tại ${guild.name}:`,
                     error
                 );
+
             }
         }
 
-        logger.warn(
-            `[COMMANDS] Hoàn tất. Thành công: ${successCount}, thất bại: ${failedCount}.`
-        );
-
-        logger.warn(
-            '[COMMANDS] Sẽ KHÔNG đăng ký lại Slash Commands.'
-        );
-
     } catch (error) {
+
         logger.error(
-            '[COMMANDS] Lỗi khi vô hiệu hóa Slash Commands:',
+            '[COMMANDS] Lỗi đăng ký Slash Commands:',
             error
         );
+
     }
 }
 
