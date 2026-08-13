@@ -2,447 +2,321 @@ import { readdir } from 'fs/promises';
 import { join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname } from 'path';
+import { Collection } from 'discord.js';
 
 import { logger } from '../utils/logger.js';
-
 
 /* =========================================================
    PATH
 ========================================================= */
 
-const __filename =
-  fileURLToPath(import.meta.url);
-
-const __dirname =
-  dirname(__filename);
-
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /* =========================================================
    INTERACTION TYPES
    ---------------------------------------------------------
-   Chỉ load:
+   File này CHỈ load:
 
    - buttons
    - selectMenus
    - modals
 
-   KHÔNG load Slash Commands ở đây.
+   KHÔNG đăng ký Slash Commands.
 ========================================================= */
 
 const interactionTypes = [
-  'buttons',
-  'selectMenus',
-  'modals'
+    'buttons',
+    'selectMenus',
+    'modals',
 ];
 
-
 /* =========================================================
-   LOAD INTERACTIONS
+   MAIN LOADER
 ========================================================= */
 
 export default async function loadInteractions(client) {
+    try {
+        if (!client) {
+            throw new Error(
+                'Discord client is not available.'
+            );
+        }
 
-  try {
+        /*
+         * Đảm bảo Collection tồn tại.
+         */
 
-    if (!client) {
+        for (const type of interactionTypes) {
+            if (
+                !client[type] ||
+                typeof client[type].set !== 'function'
+            ) {
+                client[type] = new Collection();
+            }
+        }
 
-      throw new Error(
-        'Discord client is not available.'
-      );
+        const interactionsPath = join(
+            __dirname,
+            '../interactions'
+        );
 
+        logger.info(
+            'Loading Discord interactions...'
+        );
+
+        /*
+         * Load từng loại interaction.
+         */
+
+        for (const type of interactionTypes) {
+            await loadInteractionType(
+                client,
+                interactionsPath,
+                type
+            );
+        }
+
+        logger.info(
+            `Interactions loaded: ${client.buttons.size} buttons, ${client.selectMenus.size} select menus, ${client.modals.size} modals`
+        );
+
+    } catch (error) {
+        logger.error(
+            'Error loading interactions:',
+            error
+        );
+
+        /*
+         * Không làm bot crash nếu interaction loader lỗi.
+         */
+
+        return false;
     }
 
-
-    /*
-     * Đảm bảo các Collection tồn tại.
-     */
-
-    if (!client.buttons) {
-
-      client.buttons = new Map();
-
-    }
-
-
-    if (!client.selectMenus) {
-
-      client.selectMenus = new Map();
-
-    }
-
-
-    if (!client.modals) {
-
-      client.modals = new Map();
-
-    }
-
-
-    const interactionsPath =
-      join(
-        __dirname,
-        '../interactions'
-      );
-
-
-    logger.info(
-      'Loading Discord interactions...'
-    );
-
-
-    /* =====================================================
-       LOAD TỪNG LOẠI
-    ===================================================== */
-
-    for (
-      const type
-      of interactionTypes
-    ) {
-
-      await loadInteractionType(
-        client,
-        interactionsPath,
-        type
-      );
-
-    }
-
-
-    logger.info(
-      'Discord interactions loaded successfully.'
-    );
-
-
-  } catch (error) {
-
-    logger.error(
-      'Error loading interactions:',
-      error
-    );
-
-    /*
-     * Không crash bot chỉ vì một interaction
-     * bị lỗi.
-     */
-
-  }
-
+    return true;
 }
 
-
 /* =========================================================
-   LOAD ONE INTERACTION TYPE
+   LOAD ONE TYPE
 ========================================================= */
 
 async function loadInteractionType(
-  client,
-  interactionsPath,
-  type
+    client,
+    interactionsPath,
+    type
 ) {
-
-  const typePath =
-    join(
-      interactionsPath,
-      type
+    const typePath = join(
+        interactionsPath,
+        type
     );
 
+    /*
+     * Xóa handler cũ trước khi load lại.
+     *
+     * Điều này tránh trường hợp reload làm
+     * interaction cũ vẫn còn trong Collection.
+     */
 
-  /* =======================================================
-     KIỂM TRA COLLECTION
-  ======================================================= */
+    client[type].clear();
 
-  if (
-    !client[type] ||
-    typeof client[type].set !== 'function'
-  ) {
-
-    logger.error(
-      `Client collection "${type}" is not available.`
-    );
-
-    return;
-
-  }
-
-
-  /* =======================================================
-     ĐỌC THƯ MỤC
-  ======================================================= */
-
-  let interactionFiles;
-
-
-  try {
-
-    interactionFiles =
-      await readdir(
-        typePath,
-        {
-          withFileTypes: true
-        }
-      );
-
-  } catch (error) {
-
-    if (
-      error.code ===
-      'ENOENT'
-    ) {
-
-      logger.debug(
-        `No ${type} directory found, skipping...`
-      );
-
-      return;
-
-    }
-
-
-    logger.error(
-      `Error reading ${type} directory:`,
-      error
-    );
-
-    return;
-
-  }
-
-
-  /* =======================================================
-     CHỈ LẤY FILE .JS
-  ======================================================= */
-
-  const files =
-    interactionFiles
-      .filter(
-        entry =>
-          entry.isFile() &&
-          entry.name.endsWith('.js') &&
-          !entry.name.startsWith('_')
-      )
-      .map(
-        entry =>
-          entry.name
-      );
-
-
-  if (
-    files.length === 0
-  ) {
-
-    logger.debug(
-      `No ${type} files found.`
-    );
-
-    return;
-
-  }
-
-
-  let loadedCount = 0;
-
-
-  /* =======================================================
-     LOAD FILE
-  ======================================================= */
-
-  for (
-    const file
-    of files
-  ) {
-
-    const filePath =
-      join(
-        typePath,
-        file
-      );
-
+    let entries;
 
     try {
-
-      /*
-       * Dùng file URL để tương thích ESM.
-       */
-
-      const moduleUrl =
-        pathToFileURL(
-          filePath
-        ).href;
-
-
-      const module =
-        await import(
-          moduleUrl
+        entries = await readdir(
+            typePath,
+            {
+                withFileTypes: true,
+            }
         );
-
-
-      const moduleExport =
-        module.default;
-
-
-      if (
-        !moduleExport
-      ) {
-
-        logger.warn(
-          `Interaction ${file} in ${type} has no default export.`
-        );
-
-        continue;
-
-      }
-
-
-      /*
-       * Cho phép một file export:
-
-       export default {
-         name: '...',
-         execute() {}
-       }
-
-       hoặc:
-
-       export default [
-         {...},
-         {...}
-       ];
-      */
-
-      const interactions =
-        Array.isArray(
-          moduleExport
-        )
-          ? moduleExport
-          : [moduleExport];
-
-
-      /* =====================================================
-         REGISTER INTERACTIONS
-      ===================================================== */
-
-      for (
-        const interaction
-        of interactions
-      ) {
-
-        if (
-          !interaction ||
-          typeof interaction !== 'object'
-        ) {
-
-          logger.warn(
-            `Invalid interaction export in ${file} (${type}).`
-          );
-
-          continue;
-
-        }
-
-
-        if (
-          typeof interaction.name !==
-          'string' ||
-          interaction.name.trim() === ''
-        ) {
-
-          logger.warn(
-            `Interaction ${file} in ${type} is missing a valid "name".`
-          );
-
-          continue;
-
-        }
-
-
-        if (
-          typeof interaction.execute !==
-          'function'
-        ) {
-
-          logger.warn(
-            `Interaction ${interaction.name} in ${type} is missing "execute".`
-          );
-
-          continue;
-
-        }
-
-
-        const name =
-          interaction.name.trim();
-
-
-        /*
-         * Nếu interaction trùng tên,
-         * ghi đè interaction cũ và cảnh báo.
-         */
-
-        if (
-          client[type].has(name)
-        ) {
-
-          logger.warn(
-            `Duplicate ${type} interaction "${name}" detected. Overwriting previous handler.`
-          );
-
-        }
-
-
-        client[type].set(
-          name,
-          interaction
-        );
-
-
-        loadedCount++;
-
-
-        logger.info(
-          `Loaded ${type.slice(0, -1)}: ${name}`
-        );
-
-      }
-
 
     } catch (error) {
 
-      logger.error(
-        `Error loading interaction ${file} in ${type}:`,
-        error
-      );
+        if (error?.code === 'ENOENT') {
+            logger.debug(
+                `No ${type} directory found, skipping...`
+            );
 
+            return;
+        }
+
+        logger.error(
+            `Error reading ${type} directory:`,
+            error
+        );
+
+        return;
     }
 
-  }
+    /*
+     * Chỉ lấy file .js
+     *
+     * Bỏ qua:
+     * _example.js
+     * _test.js
+     * ...
+     */
 
+    const files = entries
+        .filter(
+            entry =>
+                entry.isFile() &&
+                entry.name.endsWith('.js') &&
+                !entry.name.startsWith('_')
+        )
+        .map(
+            entry =>
+                entry.name
+        )
+        .sort();
 
-  /* =======================================================
-     SUMMARY
-  ======================================================= */
+    if (files.length === 0) {
+        logger.debug(
+            `No ${type} files found.`
+        );
 
-  logger.info(
-    `Loaded ${loadedCount} ${type}.`
-  );
+        return;
+    }
 
+    let loadedCount = 0;
+
+    /* =====================================================
+       LOAD FILES
+    ===================================================== */
+
+    for (const file of files) {
+
+        const filePath = join(
+            typePath,
+            file
+        );
+
+        try {
+
+            /*
+             * ESM import.
+             */
+
+            const moduleUrl =
+                pathToFileURL(
+                    filePath
+                ).href;
+
+            const importedModule =
+                await import(
+                    moduleUrl
+                );
+
+            const moduleExport =
+                importedModule.default;
+
+            if (!moduleExport) {
+                logger.warn(
+                    `Interaction ${file} in ${type} has no default export.`
+                );
+
+                continue;
+            }
+
+            /*
+             * Cho phép:
+
+             * export default {
+             *   name: '...',
+             *   execute() {}
+             * }
+
+             * hoặc:
+
+             * export default [
+             *   {...},
+             *   {...}
+             * ];
+             */
+
+            const interactions =
+                Array.isArray(moduleExport)
+                    ? moduleExport
+                    : [moduleExport];
+
+            /* =================================================
+               REGISTER
+            ================================================= */
+
+            for (
+                const interaction
+                of interactions
+            ) {
+
+                if (
+                    !interaction ||
+                    typeof interaction !== 'object'
+                ) {
+                    logger.warn(
+                        `Invalid interaction export in ${file} (${type}).`
+                    );
+
+                    continue;
+                }
+
+                const name =
+                    typeof interaction.name === 'string'
+                        ? interaction.name.trim()
+                        : '';
+
+                if (!name) {
+                    logger.warn(
+                        `Interaction ${file} in ${type} is missing a valid "name".`
+                    );
+
+                    continue;
+                }
+
+                if (
+                    typeof interaction.execute !==
+                    'function'
+                ) {
+                    logger.warn(
+                        `Interaction "${name}" in ${type} is missing an execute() function.`
+                    );
+
+                    continue;
+                }
+
+                /*
+                 * Nếu trùng name thì ghi đè.
+                 */
+
+                if (
+                    client[type].has(name)
+                ) {
+                    logger.warn(
+                        `Duplicate ${type} interaction "${name}". Overwriting previous handler.`
+                    );
+                }
+
+                client[type].set(
+                    name,
+                    interaction
+                );
+
+                loadedCount++;
+
+                logger.info(
+                    `Loaded ${type.slice(0, -1)}: ${name}`
+                );
+            }
+
+        } catch (error) {
+
+            logger.error(
+                `Error loading interaction ${file} in ${type}:`,
+                error
+            );
+        }
+    }
+
+    logger.info(
+        `Loaded ${loadedCount} ${type}.`
+    );
 }
-
-
-/* =========================================================
-   IMPORTANT
-   ---------------------------------------------------------
-   FILE NÀY KHÔNG:
-
-   ❌ register Slash Commands
-   ❌ guild.commands.set(...)
-   ❌ client.application.commands.set(...)
-   ❌ REST.put(...)
-   ❌ REST.post(...)
-   ❌ đăng ký command lên Discord
-
-   Nó CHỈ load:
-
-   ✅ Buttons
-   ✅ Select Menus
-   ✅ Modals
-========================================================= */
