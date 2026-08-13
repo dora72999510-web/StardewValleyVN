@@ -305,33 +305,100 @@ async function registerGuildCommands(client, guildId, commands, totalSubcommands
 }
 
 export async function registerCommands(client, options = {}) {
-    const {
-        clientId = null,
-        guildId = null,
-        multiGuild = false,
-    } = options;
-
     try {
-        const { commands, totalSubcommands } = collectCommandPayloads(client);
+        const {
+            clientId = client.user?.id || null,
+        } = options;
 
-        if (multiGuild) {
-            logger.info('Command registration mode: multi-guild (global commands)');
-            await registerGlobalCommands(client, clientId, commands, totalSubcommands);
-            return;
-        }
+        // =====================================================
+        // SLASH COMMANDS ĐÃ BỊ VÔ HIỆU HÓA
+        // =====================================================
 
-        if (!guildId) {
+        logger.info(
+            '[COMMANDS] Slash Commands đã được vô hiệu hóa.'
+        );
+
+        if (!clientId) {
             logger.warn(
-                'Command registration skipped: set GUILD_ID for single-server setup, or MULTI_GUILD=true for multi-server support'
+                '[COMMANDS] Không tìm thấy Client ID. Bỏ qua xóa Global Commands.'
             );
-            return;
+        } else {
+            // =================================================
+            // XÓA TOÀN BỘ GLOBAL SLASH COMMANDS
+            // =================================================
+
+            try {
+                logger.info(
+                    '[COMMANDS] Đang xóa Global Slash Commands...'
+                );
+
+                await client.rest.put(
+                    `/applications/${clientId}/commands`,
+                    {
+                        body: [],
+                    }
+                );
+
+                logger.info(
+                    '[COMMANDS] Đã xóa toàn bộ Global Slash Commands.'
+                );
+            } catch (error) {
+                logger.error(
+                    '[COMMANDS] Không thể xóa Global Slash Commands:',
+                    error
+                );
+            }
         }
 
-        logger.info(`Command registration mode: single-guild (GUILD_ID=${guildId})`);
-        await registerGuildCommands(client, guildId, commands, totalSubcommands);
+        // =====================================================
+        // XÓA TOÀN BỘ GUILD SLASH COMMANDS
+        // =====================================================
+
+        try {
+            const guilds = client.guilds.cache;
+
+            logger.info(
+                `[COMMANDS] Đang xóa Slash Commands của ${guilds.size} server...`
+            );
+
+            for (const guild of guilds.values()) {
+                try {
+                    await guild.commands.set([]);
+
+                    logger.info(
+                        `[COMMANDS] Đã xóa Slash Commands tại ${guild.name} (${guild.id}).`
+                    );
+                } catch (error) {
+                    logger.error(
+                        `[COMMANDS] Không thể xóa Slash Commands tại ${guild.name} (${guild.id}):`,
+                        error
+                    );
+                }
+            }
+
+            logger.info(
+                '[COMMANDS] Đã hoàn tất xóa Guild Slash Commands.'
+            );
+        } catch (error) {
+            logger.error(
+                '[COMMANDS] Lỗi khi xóa Guild Slash Commands:',
+                error
+            );
+        }
+
+        // =====================================================
+        // KHÔNG ĐĂNG KÝ LẠI SLASH COMMANDS
+        // =====================================================
+
+        logger.info(
+            '[COMMANDS] Slash Command registration đã bị tắt hoàn toàn.'
+        );
+
     } catch (error) {
-        logger.error('Error registering commands:', error);
-        throw error;
+        logger.error(
+            '[COMMANDS] Error disabling slash commands:',
+            error
+        );
     }
 }
 
