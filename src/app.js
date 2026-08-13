@@ -21,7 +21,11 @@ import {
   updateCounter,
 } from './services/serverstatsService.js';
 
-import { logger, startupLog, shutdownLog } from './utils/logger.js';
+import {
+  logger,
+  startupLog,
+  shutdownLog,
+} from './utils/logger.js';
 
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
@@ -104,16 +108,16 @@ class TitanBot extends Client {
     /* =====================================================
        SILENT DEVELOPER COMMAND
        -----------------------------------------------------
+       Slash Command:
+
        /nha-phat-trien
+       honganhrose
 
-       Command này chỉ dùng để Discord hiển thị một
-       Slash Command duy nhất.
+       Khi Enter:
 
-       Khi người dùng Enter:
-
-       - Không gửi message vào channel.
+       - Không gửi message ra channel.
+       - Không tạo tin nhắn công khai.
        - Không chạy command trong client.commands.
-       - Không thực hiện hành động khác.
     ===================================================== */
 
     this.on(
@@ -122,12 +126,16 @@ class TitanBot extends Client {
 
         try {
 
+          /* Chỉ xử lý Slash Command */
+
           if (
             !interaction.isChatInputCommand()
           ) {
             return;
           }
 
+
+          /* Chỉ xử lý command này */
 
           if (
             interaction.commandName !==
@@ -138,11 +146,8 @@ class TitanBot extends Client {
 
 
           /*
-           * Discord yêu cầu interaction phải được
-           * acknowledge trong thời gian giới hạn.
-           *
-           * ephemeral = true:
-           * reply chỉ thuộc về người sử dụng.
+           * Acknowledge interaction bằng ephemeral reply.
+           * Người khác trong server không nhìn thấy.
            */
 
           await interaction.deferReply({
@@ -151,11 +156,10 @@ class TitanBot extends Client {
 
 
           /*
-           * Xóa reply ngay lập tức.
+           * Xóa reply ngay sau khi acknowledge.
            *
-           * Kết quả:
-           * người dùng nhấn Enter nhưng bot không
-           * để lại message nào trong channel.
+           * Vì vậy người dùng sẽ không thấy bot gửi
+           * nội dung gì ra channel.
            */
 
           await interaction.deleteReply()
@@ -170,10 +174,7 @@ class TitanBot extends Client {
         } catch (error) {
 
           /*
-           * Interaction có thể đã được handler khác
-           * xử lý hoặc đã hết hạn.
-           *
-           * Không để lỗi này làm crash bot.
+           * Không để lỗi interaction làm crash bot.
            */
 
           logger.debug(
@@ -298,17 +299,6 @@ class TitanBot extends Client {
 
       /* =====================================================
          LOAD PREFIX COMMANDS
-         -----------------------------------------------------
-         Quan trọng:
-
-         Phần này VẪN GIỮ.
-
-         !ban
-         !warn
-         !clearuser
-         ...
-
-         vẫn được load vào client.commands.
       ===================================================== */
 
       startupLog(
@@ -367,15 +357,14 @@ class TitanBot extends Client {
       ===================================================== */
 
       /*
-       * Không gọi commandLoader.registerCommands().
-       *
-       * Chỉ thiết lập:
+       * Chỉ đăng ký:
        *
        * /nha-phat-trien
        *
+       * Các Slash Command cũ sẽ bị xóa.
        */
 
-      await this.disableSlashCommands();
+      await this.registerDeveloperCommand();
 
 
       startupLog(
@@ -432,17 +421,15 @@ class TitanBot extends Client {
 
 
   /* =========================================================
-     SLASH COMMAND SETUP
+     REGISTER DEVELOPER SLASH COMMAND
      ---------------------------------------------------------
-     Chỉ giữ:
+     Chỉ còn:
 
      /nha-phat-trien
-     Tên tác giả
-
-     Các Slash Command cũ sẽ bị xóa.
+     honganhrose
   ========================================================= */
 
-  async disableSlashCommands() {
+  async registerDeveloperCommand() {
 
     try {
 
@@ -453,8 +440,8 @@ class TitanBot extends Client {
 
       if (!applicationId) {
 
-        logger.warn(
-          '⚠️ Không tìm thấy Application ID.'
+        logger.error(
+          '❌ Không tìm thấy Application ID.'
         );
 
         return;
@@ -473,8 +460,17 @@ class TitanBot extends Client {
 
       const developerCommand = {
 
+        /*
+         * QUAN TRỌNG:
+         * Slash command không được có dấu/khoảng trắng.
+         */
+
         name:
-          'phát triển bởi (developed by)',
+          'nha-phat-trien',
+
+        /*
+         * Đây là phần mô tả hiển thị bên dưới command.
+         */
 
         description:
           'honganhrose',
@@ -492,7 +488,10 @@ class TitanBot extends Client {
 
 
       /* =====================================================
-         GLOBAL COMMAND
+         GLOBAL COMMANDS
+         -----------------------------------------------------
+         Thay toàn bộ Global Slash Commands bằng command
+         duy nhất ở trên.
       ===================================================== */
 
       try {
@@ -513,7 +512,7 @@ class TitanBot extends Client {
 
 
         logger.info(
-          '✅ Global /nha-phat-trien registered.'
+          '✅ Global Slash Command: /nha-phat-trien'
         );
 
 
@@ -530,8 +529,7 @@ class TitanBot extends Client {
       /* =====================================================
          GUILD COMMANDS
          -----------------------------------------------------
-         Xóa command cũ trong từng server và giữ lại
-         duy nhất /nha-phat-trien.
+         Guild commands được cập nhật nhanh hơn Global.
       ===================================================== */
 
       let guilds;
@@ -569,20 +567,14 @@ class TitanBot extends Client {
 
         try {
 
-          await this.rest.put(
+          /*
+           * set() sẽ thay toàn bộ Slash Commands của guild
+           * bằng duy nhất /nha-phat-trien.
+           */
 
-            Routes.applicationGuildCommands(
-              applicationId,
-              guild.id
-            ),
-
-            {
-              body: [
-                developerCommand,
-              ],
-            }
-
-          );
+          await guild.commands.set([
+            developerCommand,
+          ]);
 
 
           successCount++;
@@ -1259,10 +1251,6 @@ class TitanBot extends Client {
         }
 
 
-        /* =================================================
-           SAVE CLEANED COUNTERS
-        ================================================= */
-
         if (
           orphanedCounters.length >
           0
@@ -1426,11 +1414,8 @@ class TitanBot extends Client {
   /* =========================================================
      REGISTER COMMANDS
      ---------------------------------------------------------
-     Hàm này vẫn tồn tại để tránh code khác trong project
-     bị lỗi nếu gọi bot.registerCommands().
-
-     Nhưng nó KHÔNG đăng ký các command trong
-     client.commands.
+     Hàm này được giữ lại để các phần khác của project
+     không bị lỗi nếu gọi bot.registerCommands().
 
      Nó chỉ đăng ký /nha-phat-trien.
   ========================================================= */
@@ -1439,7 +1424,7 @@ class TitanBot extends Client {
 
     try {
 
-      await this.disableSlashCommands();
+      await this.registerDeveloperCommand();
 
 
     } catch (error) {
@@ -1690,7 +1675,8 @@ try {
 
 
           /*
-           * Discord interaction errors có thể recover.
+           * Một số Discord interaction errors
+           * có thể bỏ qua.
            */
 
           if (
