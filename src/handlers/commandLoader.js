@@ -1,186 +1,383 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { Collection } from 'discord.js';
+import { Collection, Routes } from 'discord.js';
 import { logger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
 const MAX_COMMANDS = 100;
 const COMMAND_COUNT_WARN_THRESHOLD = 90;
 
+/* =========================================================
+   SUBCOMMAND INFO
+========================================================= */
+
 function getSubcommandInfo(commandData) {
     const subcommands = [];
-    
+
     if (commandData.options) {
         for (const option of commandData.options) {
-if (option.type === 1) {
+            if (option.type === 1) {
                 subcommands.push(option.name);
-} else if (option.type === 2) {
+            } else if (option.type === 2) {
                 if (option.options) {
                     for (const subOption of option.options) {
-if (subOption.type === 1) {
-                            subcommands.push(`${option.name}/${subOption.name}`);
+                        if (subOption.type === 1) {
+                            subcommands.push(
+                                `${option.name}/${subOption.name}`
+                            );
                         }
                     }
                 }
             }
         }
     }
-    
+
     return subcommands;
 }
 
+/* =========================================================
+   GET ALL COMMAND FILES
+========================================================= */
+
 async function getAllFiles(directory, fileList = []) {
-    const files = await fs.readdir(directory, { withFileTypes: true });
-    
+    const files = await fs.readdir(directory, {
+        withFileTypes: true
+    });
+
     for (const file of files) {
-        const filePath = path.join(directory, file.name);
-        
+        const filePath = path.join(
+            directory,
+            file.name
+        );
+
         if (file.isDirectory()) {
             if (file.name === 'modules') {
                 continue;
             }
-            await getAllFiles(filePath, fileList);
-        } else if (file.name.endsWith('.js')) {
+
+            await getAllFiles(
+                filePath,
+                fileList
+            );
+
+        } else if (
+            file.name.endsWith('.js')
+        ) {
             fileList.push(filePath);
         }
     }
-    
+
     return fileList;
 }
 
+/* =========================================================
+   LOAD COMMANDS
+   ---------------------------------------------------------
+   QUAN TRỌNG:
+   Hàm này VẪN được giữ lại vì hệ thống prefix
+   !ban, !clearuser, !warn... của bạn sử dụng
+   client.commands.
+========================================================= */
+
 export async function loadCommands(client) {
     client.commands = new Collection();
-    const commandsPath = path.join(__dirname, '../commands');
-    const commandFiles = await getAllFiles(commandsPath);
-    
-    logger.info(`Found ${commandFiles.length} command files to load`);
-    
+
+    const commandsPath = path.join(
+        __dirname,
+        '../commands'
+    );
+
+    const commandFiles =
+        await getAllFiles(commandsPath);
+
+    logger.info(
+        `Found ${commandFiles.length} command files to load`
+    );
+
     const uniqueCommandNames = new Set();
-    
+
     for (const filePath of commandFiles) {
         try {
-            const normalizedPath = filePath.replace(/\\/g, '/');
-            
-            const commandName = path.basename(filePath, '.js');
-            const commandDir = path.dirname(filePath);
-            const category = path.basename(commandDir);
-            
-            const commandModule = await import(`file://${filePath}`);
-            const command = commandModule.default || commandModule;
-            
-            if (!command.data || !command.execute) {
-                logger.warn(`Command at ${filePath} is missing required "data" or "execute" property.`);
+            const normalizedPath =
+                filePath.replace(/\\/g, '/');
+
+            const commandName =
+                path.basename(
+                    filePath,
+                    '.js'
+                );
+
+            const commandDir =
+                path.dirname(filePath);
+
+            const category =
+                path.basename(commandDir);
+
+            const commandModule =
+                await import(
+                    `file://${filePath}`
+                );
+
+            const command =
+                commandModule.default ||
+                commandModule;
+
+            if (
+                !command.data ||
+                !command.execute
+            ) {
+                logger.warn(
+                    `Command at ${filePath} is missing required "data" or "execute" property.`
+                );
+
                 continue;
             }
-            
-            command.category = category;
-            command.filePath = normalizedPath;
-            
-            const primaryCommandName = command.data.name;
-            
-            if (!uniqueCommandNames.has(primaryCommandName)) {
-                uniqueCommandNames.add(primaryCommandName);
-                
-                client.commands.set(primaryCommandName, command);
+
+            command.category =
+                category;
+
+            command.filePath =
+                normalizedPath;
+
+            const primaryCommandName =
+                command.data.name;
+
+            if (
+                !uniqueCommandNames.has(
+                    primaryCommandName
+                )
+            ) {
+                uniqueCommandNames.add(
+                    primaryCommandName
+                );
+
+                client.commands.set(
+                    primaryCommandName,
+                    command
+                );
             }
-            
-            const subcommands = getSubcommandInfo(command.data.toJSON());
-            
-            logger.info(`Loaded command: ${primaryCommandName} from ${normalizedPath} (category: ${category})`);
-            
-            if (subcommands.length > 0) {
-                logger.info(`  - Subcommands: ${subcommands.join(', ')}`);
+
+            const subcommands =
+                getSubcommandInfo(
+                    command.data.toJSON()
+                );
+
+            logger.info(
+                `Loaded command: ${primaryCommandName} from ${normalizedPath} (category: ${category})`
+            );
+
+            if (
+                subcommands.length > 0
+            ) {
+                logger.info(
+                    `  - Subcommands: ${subcommands.join(', ')}`
+                );
             }
-            
+
         } catch (error) {
-            logger.error(`Error loading command from ${filePath}:`, error);
+            logger.error(
+                `Error loading command from ${filePath}:`,
+                error
+            );
         }
     }
-    
-    const commandsWithSubcommands = Array.from(client.commands.values()).filter(cmd => {
-        const subcommands = getSubcommandInfo(cmd.data.toJSON());
-        return subcommands.length > 0;
-    });
-    
-    const totalSubcommands = commandsWithSubcommands.reduce((total, cmd) => {
-        return total + getSubcommandInfo(cmd.data.toJSON()).length;
-    }, 0);
-    
-    const uniqueCommands = new Set();
-    for (const [name, command] of client.commands.entries()) {
-        if (command.data && command.data.name) {
-            uniqueCommands.add(command.data.name);
+
+    const commandsWithSubcommands =
+        Array.from(
+            client.commands.values()
+        ).filter((cmd) => {
+            const subcommands =
+                getSubcommandInfo(
+                    cmd.data.toJSON()
+                );
+
+            return (
+                subcommands.length > 0
+            );
+        });
+
+    const totalSubcommands =
+        commandsWithSubcommands.reduce(
+            (total, cmd) => {
+                return (
+                    total +
+                    getSubcommandInfo(
+                        cmd.data.toJSON()
+                    ).length
+                );
+            },
+            0
+        );
+
+    const uniqueCommands =
+        new Set();
+
+    for (
+        const [
+            name,
+            command
+        ] of client.commands.entries()
+    ) {
+        if (
+            command.data &&
+            command.data.name
+        ) {
+            uniqueCommands.add(
+                command.data.name
+            );
         }
     }
-    
-    logger.info(`Loaded ${uniqueCommands.size} commands`);
+
+    logger.info(
+        `Loaded ${uniqueCommands.size} commands`
+    );
+
     return client.commands;
 }
 
+/* =========================================================
+   LEGACY COMMAND PAYLOAD
+   ---------------------------------------------------------
+   Giữ lại để không phá các phần code khác nếu có import.
+   KHÔNG được sử dụng để đăng ký Slash Commands.
+========================================================= */
+
 function collectCommandPayloads(client) {
     const commands = [];
+
     let totalSubcommands = 0;
-    const registeredNames = new Set();
 
-    for (const command of client.commands.values()) {
-        if (!command.data || typeof command.data.toJSON !== 'function') {
-            logger.warn(`Command missing data or toJSON method: ${command}`);
+    const registeredNames =
+        new Set();
+
+    for (
+        const command
+        of client.commands.values()
+    ) {
+        if (
+            !command.data ||
+            typeof command.data.toJSON !==
+                'function'
+        ) {
+            logger.warn(
+                `Command missing data or toJSON method: ${command}`
+            );
+
             continue;
         }
 
-        const commandName = command.data.name;
-        logger.debug(`Processing command for registration: ${commandName}`);
+        const commandName =
+            command.data.name;
 
-        if (registeredNames.has(commandName)) {
-            logger.debug(`Skipping duplicate command: ${commandName}`);
+        if (
+            registeredNames.has(
+                commandName
+            )
+        ) {
             continue;
         }
 
-        registeredNames.add(commandName);
-        const commandJson = command.data.toJSON();
-        commands.push(commandJson);
-        totalSubcommands += getSubcommandInfo(commandJson).length;
+        registeredNames.add(
+            commandName
+        );
 
-        if (process.env.NODE_ENV !== 'production') {
-            logger.debug(`Registering command: ${commandName}`);
-        }
+        const commandJson =
+            command.data.toJSON();
+
+        commands.push(
+            commandJson
+        );
+
+        totalSubcommands +=
+            getSubcommandInfo(
+                commandJson
+            ).length;
     }
 
-    return { commands, totalSubcommands };
+    return {
+        commands,
+        totalSubcommands
+    };
 }
+
+/* =========================================================
+   VALIDATE COMMANDS
+========================================================= */
 
 function validateCommands(commands) {
     const validationErrors = [];
 
     for (const cmd of commands) {
-        if (cmd.name && cmd.name.length > 32) {
-            validationErrors.push(`Command ${cmd.name} has name longer than 32 chars: "${cmd.name}" (${cmd.name.length} chars)`);
+        if (
+            cmd.name &&
+            cmd.name.length > 32
+        ) {
+            validationErrors.push(
+                `Command ${cmd.name} has name longer than 32 chars: "${cmd.name}" (${cmd.name.length} chars)`
+            );
         }
-        if (cmd.description && cmd.description.length > 110) {
-            validationErrors.push(`Command ${cmd.name} has description longer than 110 chars: "${cmd.description}" (${cmd.description.length} chars)`);
+
+        if (
+            cmd.description &&
+            cmd.description.length > 110
+        ) {
+            validationErrors.push(
+                `Command ${cmd.name} has description longer than 110 chars: "${cmd.description}" (${cmd.description.length} chars)`
+            );
         }
 
         if (!cmd.options) {
             continue;
         }
 
-        for (const option of cmd.options) {
-            if (option.name && option.name.length > 32) {
-                validationErrors.push(`Command ${cmd.name} option ${option.name} has name longer than 32 chars: "${option.name}" (${option.name.length} chars)`);
+        for (
+            const option
+            of cmd.options
+        ) {
+            if (
+                option.name &&
+                option.name.length > 32
+            ) {
+                validationErrors.push(
+                    `Command ${cmd.name} option ${option.name} has name longer than 32 chars`
+                );
             }
-            if (option.description && option.description.length > 110) {
-                validationErrors.push(`Command ${cmd.name} option ${option.name} has description longer than 110 chars: "${option.description}" (${option.description.length} chars)`);
+
+            if (
+                option.description &&
+                option.description.length > 110
+            ) {
+                validationErrors.push(
+                    `Command ${cmd.name} option ${option.name} has description longer than 110 chars`
+                );
             }
 
             if (option.choices) {
-                for (const choice of option.choices) {
-                    if (choice.name && choice.name.length > 110) {
-                        validationErrors.push(`Command ${cmd.name} option ${option.name} choice ${choice.name} has name longer than 110 chars: "${choice.name}" (${choice.name.length} chars)`);
+                for (
+                    const choice
+                    of option.choices
+                ) {
+                    if (
+                        choice.name &&
+                        choice.name.length > 110
+                    ) {
+                        validationErrors.push(
+                            `Command ${cmd.name} option ${option.name} choice ${choice.name} has name longer than 110 chars`
+                        );
                     }
-                    if (choice.value && choice.value.length > 100) {
-                        validationErrors.push(`Command ${cmd.name} option ${option.name} choice ${choice.name} has value longer than 100 chars: "${choice.value}" (${choice.value.length} chars)`);
+
+                    if (
+                        choice.value &&
+                        typeof choice.value ===
+                            'string' &&
+                        choice.value.length > 100
+                    ) {
+                        validationErrors.push(
+                            `Command ${cmd.name} option ${option.name} choice ${choice.name} has value longer than 100 chars`
+                        );
                     }
                 }
             }
@@ -189,239 +386,321 @@ function validateCommands(commands) {
                 continue;
             }
 
-            for (const subOption of option.options) {
-                if (subOption.name && subOption.name.length > 32) {
-                    validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has name longer than 32 chars: "${subOption.name}" (${subOption.name.length} chars)`);
-                }
-                if (subOption.description && subOption.description.length > 110) {
-                    validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has description longer than 110 chars: "${subOption.description}" (${subOption.description.length} chars)`);
+            for (
+                const subOption
+                of option.options
+            ) {
+                if (
+                    subOption.name &&
+                    subOption.name.length > 32
+                ) {
+                    validationErrors.push(
+                        `Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has name longer than 32 chars`
+                    );
                 }
 
-                if (!subOption.choices) {
-                    continue;
-                }
-
-                for (const choice of subOption.choices) {
-                    if (choice.name && choice.name.length > 110) {
-                        validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} choice ${choice.name} has name longer than 110 chars: "${choice.name}" (${choice.name.length} chars)`);
-                    }
-                    if (choice.value && choice.value.length > 100) {
-                        validationErrors.push(`Command ${cmd.name} subcommand ${option.name} option ${subOption.name} choice ${choice.name} has value longer than 100 chars: "${choice.value}" (${choice.value.length} chars)`);
-                    }
+                if (
+                    subOption.description &&
+                    subOption.description.length > 110
+                ) {
+                    validationErrors.push(
+                        `Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has description longer than 110 chars`
+                    );
                 }
             }
         }
     }
 
-    if (validationErrors.length > 0) {
-        logger.error('Command validation failed. Errors:');
-        validationErrors.forEach((error) => logger.error(`  - ${error}`));
-        throw new Error(`Command validation failed with ${validationErrors.length} errors`);
+    if (
+        validationErrors.length > 0
+    ) {
+        logger.error(
+            'Command validation failed:'
+        );
+
+        validationErrors.forEach(
+            error =>
+                logger.error(
+                    `  - ${error}`
+                )
+        );
+
+        throw new Error(
+            `Command validation failed with ${validationErrors.length} errors`
+        );
     }
 }
 
-function prepareCommandsForRegistration(commands, { multiGuild = false } = {}) {
-    if (commands.length >= COMMAND_COUNT_WARN_THRESHOLD) {
+/* =========================================================
+   PREPARE COMMANDS
+   ---------------------------------------------------------
+   Chỉ giữ để tương thích với code cũ.
+   Không còn được dùng để register Slash Commands.
+========================================================= */
+
+function prepareCommandsForRegistration(
+    commands,
+    { multiGuild = false } = {}
+) {
+    if (
+        commands.length >=
+        COMMAND_COUNT_WARN_THRESHOLD
+    ) {
         logger.warn(
             `Command count (${commands.length}) is near Discord's ${MAX_COMMANDS} limit` +
-            (multiGuild ? ' for global registration' : ' for guild registration')
+            (
+                multiGuild
+                    ? ' for global registration'
+                    : ' for guild registration'
+            )
         );
     }
 
-    if (commands.length <= MAX_COMMANDS) {
+    if (
+        commands.length <=
+        MAX_COMMANDS
+    ) {
         return commands;
     }
 
-    logger.warn(`Command count (${commands.length}) exceeds Discord limit (${MAX_COMMANDS}), truncating...`);
-    const truncated = commands.slice(0, MAX_COMMANDS);
-    logger.info(`Truncated to ${truncated.length} commands for registration`);
-    return truncated;
+    logger.warn(
+        `Command count (${commands.length}) exceeds Discord limit (${MAX_COMMANDS}), truncating...`
+    );
+
+    return commands.slice(
+        0,
+        MAX_COMMANDS
+    );
 }
 
-async function registerGlobalCommands(client, clientId, commands, totalSubcommands) {
-    if (!clientId) {
-        throw new Error('CLIENT_ID is required for global command registration when MULTI_GUILD=true');
-    }
+/* =========================================================
+   REGISTER COMMANDS
+   =========================================================
+   !!! ĐÃ TẮT HOÀN TOÀN !!!
 
-    if (!client.rest) {
-        throw new Error('Discord REST client is not available for global command registration');
-    }
+   App.js của bạn vẫn có thể gọi:
 
-    logger.info(`Preparing to register ${totalSubcommands + commands.length} commands globally (multi-guild mode)`);
-    logger.info('Validating commands before registration...');
-    validateCommands(commands);
-    logger.info('Command validation passed');
+       await this.registerCommands();
 
-    const commandsToRegister = prepareCommandsForRegistration(commands, { multiGuild: true });
+   nhưng hàm này KHÔNG đăng ký command.
 
-    logger.info(`Registering ${commandsToRegister.length} global commands...`);
-    await client.rest.put(`/applications/${clientId}/commands`, { body: commandsToRegister });
-    logger.info(`Successfully registered ${commandsToRegister.length} global commands`);
-    logger.info('Global commands may take up to an hour to appear in all servers on first deploy');
-}
+   Nó chỉ:
+   1. Xóa Global Slash Commands.
+   2. Xóa Guild Slash Commands.
+   3. Không đăng ký lại.
+========================================================= */
 
-async function registerGuildCommands(client, guildId, commands, totalSubcommands) {
-    logger.info(`Preparing to register ${totalSubcommands + commands.length} commands for guild ${guildId}`);
-    logger.info('Validating commands before registration...');
-    validateCommands(commands);
-    logger.info('Command validation passed');
-
-    const guild = await client.guilds.fetch(guildId);
-    const existingCommands = await guild.commands.fetch();
-    logger.info(`Found ${existingCommands.size} existing guild commands`);
-
-    const commandsToRegister = prepareCommandsForRegistration(commands, { multiGuild: false });
-
-    if (process.env.NODE_ENV !== 'production') {
-        logger.info(`Registering ${commandsToRegister.length} commands for guild ${guild.name} (${guild.id})`);
-    }
-
+export async function registerCommands(
+    client,
+    options = {}
+) {
     try {
-        logger.info(`Registering ${commandsToRegister.length} guild commands...`);
-        await guild.commands.set(commandsToRegister);
-        logger.info(`Successfully registered ${commandsToRegister.length} guild commands`);
-
-        const registeredCommands = await guild.commands.fetch();
-        if (registeredCommands.size !== commandsToRegister.length) {
-            logger.warn(`Warning: Expected ${commandsToRegister.length} commands, but Discord reports ${registeredCommands.size} registered`);
-        } else {
-            logger.info(`Verification passed: ${registeredCommands.size} commands successfully registered`);
-        }
-    } catch (error) {
-        logger.error('Failed to register commands:', error);
-
-        if (existingCommands.size > 0) {
-            logger.info('Attempting to restore previous commands due to registration failure...');
-            try {
-                await guild.commands.set(existingCommands.map((cmd) => cmd));
-                logger.info('Successfully restored previous commands');
-            } catch (restoreError) {
-                logger.error('Failed to restore previous commands:', restoreError);
-            }
-        }
-
-        throw error;
-    }
-}
-
-export async function registerCommands(client, options = {}) {
-    try {
-        const {
-            clientId = client.user?.id || null,
-        } = options;
-
-        // =====================================================
-        // SLASH COMMANDS ĐÃ BỊ VÔ HIỆU HÓA
-        // =====================================================
-
-        logger.info(
-            '[COMMANDS] Slash Commands đã được vô hiệu hóa.'
-        );
+        const clientId =
+            options.clientId ||
+            client.application?.id ||
+            client.user?.id;
 
         if (!clientId) {
-            logger.warn(
-                '[COMMANDS] Không tìm thấy Client ID. Bỏ qua xóa Global Commands.'
+            logger.error(
+                '[COMMANDS] Không tìm thấy CLIENT_ID / Application ID.'
             );
-        } else {
-            // =================================================
-            // XÓA TOÀN BỘ GLOBAL SLASH COMMANDS
-            // =================================================
 
+            return;
+        }
+
+        if (!client.rest) {
+            logger.error(
+                '[COMMANDS] Discord REST client không khả dụng.'
+            );
+
+            return;
+        }
+
+        logger.warn(
+            '=================================================='
+        );
+
+        logger.warn(
+            '[COMMANDS] SLASH COMMANDS ĐÃ BỊ VÔ HIỆU HÓA'
+        );
+
+        logger.warn(
+            '=================================================='
+        );
+
+        /* =================================================
+           GLOBAL COMMANDS
+        ================================================= */
+
+        try {
+            logger.info(
+                '[COMMANDS] Đang xóa Global Slash Commands...'
+            );
+
+            await client.rest.put(
+                Routes.applicationCommands(
+                    clientId
+                ),
+                {
+                    body: []
+                }
+            );
+
+            logger.info(
+                '[COMMANDS] Đã xóa Global Slash Commands.'
+            );
+
+        } catch (error) {
+            logger.error(
+                '[COMMANDS] Lỗi xóa Global Slash Commands:',
+                error
+            );
+        }
+
+        /* =================================================
+           GUILD COMMANDS
+        ================================================= */
+
+        let guilds;
+
+        try {
+            guilds =
+                await client.guilds.fetch();
+
+            logger.info(
+                `[COMMANDS] Bot đang ở ${guilds.size} server.`
+            );
+
+        } catch (error) {
+            logger.error(
+                '[COMMANDS] Không thể lấy danh sách server:',
+                error
+            );
+
+            return;
+        }
+
+        let successCount = 0;
+        let failedCount = 0;
+
+        for (
+            const guild
+            of guilds.values()
+        ) {
             try {
-                logger.info(
-                    '[COMMANDS] Đang xóa Global Slash Commands...'
-                );
-
                 await client.rest.put(
-                    `/applications/${clientId}/commands`,
+                    Routes.applicationGuildCommands(
+                        clientId,
+                        guild.id
+                    ),
                     {
-                        body: [],
+                        body: []
                     }
                 );
 
+                successCount++;
+
                 logger.info(
-                    '[COMMANDS] Đã xóa toàn bộ Global Slash Commands.'
+                    `[COMMANDS] Đã xóa Slash Commands tại ${guild.name} (${guild.id})`
                 );
+
             } catch (error) {
+                failedCount++;
+
                 logger.error(
-                    '[COMMANDS] Không thể xóa Global Slash Commands:',
+                    `[COMMANDS] Không thể xóa Slash Commands tại ${guild.name} (${guild.id}):`,
                     error
                 );
             }
         }
 
-        // =====================================================
-        // XÓA TOÀN BỘ GUILD SLASH COMMANDS
-        // =====================================================
+        logger.warn(
+            `[COMMANDS] Hoàn tất. Thành công: ${successCount}, thất bại: ${failedCount}.`
+        );
 
-        try {
-            const guilds = client.guilds.cache;
-
-            logger.info(
-                `[COMMANDS] Đang xóa Slash Commands của ${guilds.size} server...`
-            );
-
-            for (const guild of guilds.values()) {
-                try {
-                    await guild.commands.set([]);
-
-                    logger.info(
-                        `[COMMANDS] Đã xóa Slash Commands tại ${guild.name} (${guild.id}).`
-                    );
-                } catch (error) {
-                    logger.error(
-                        `[COMMANDS] Không thể xóa Slash Commands tại ${guild.name} (${guild.id}):`,
-                        error
-                    );
-                }
-            }
-
-            logger.info(
-                '[COMMANDS] Đã hoàn tất xóa Guild Slash Commands.'
-            );
-        } catch (error) {
-            logger.error(
-                '[COMMANDS] Lỗi khi xóa Guild Slash Commands:',
-                error
-            );
-        }
-
-        // =====================================================
-        // KHÔNG ĐĂNG KÝ LẠI SLASH COMMANDS
-        // =====================================================
-
-        logger.info(
-            '[COMMANDS] Slash Command registration đã bị tắt hoàn toàn.'
+        logger.warn(
+            '[COMMANDS] Sẽ KHÔNG đăng ký lại Slash Commands.'
         );
 
     } catch (error) {
         logger.error(
-            '[COMMANDS] Error disabling slash commands:',
+            '[COMMANDS] Lỗi khi vô hiệu hóa Slash Commands:',
             error
         );
     }
 }
 
-export async function reloadCommand(client, commandName) {
-    const command = client.commands.get(commandName);
-    
-    if (!command) {
-        return { success: false, message: `Command "${commandName}" not found` };
-    }
-    
-    try {
-        const commandPath = path.resolve(command.filePath);
-        const moduleUrl = pathToFileURL(commandPath);
-        moduleUrl.searchParams.set('t', Date.now().toString());
+/* =========================================================
+   RELOAD COMMAND
+   ---------------------------------------------------------
+   Giữ nguyên để hệ thống prefix có thể reload command.
+========================================================= */
 
-        const newCommand = (await import(moduleUrl.href)).default;
-        
-        client.commands.set(commandName, newCommand);
-        
-        logger.info(`Reloaded command: ${commandName}`);
-        return { success: true, message: `Successfully reloaded command "${commandName}"` };
+export async function reloadCommand(
+    client,
+    commandName
+) {
+    const command =
+        client.commands.get(
+            commandName
+        );
+
+    if (!command) {
+        return {
+            success: false,
+            message:
+                `Command "${commandName}" not found`
+        };
+    }
+
+    try {
+        const commandPath =
+            path.resolve(
+                command.filePath
+            );
+
+        const moduleUrl =
+            pathToFileURL(
+                commandPath
+            );
+
+        moduleUrl.searchParams.set(
+            't',
+            Date.now().toString()
+        );
+
+        const newCommand =
+            (
+                await import(
+                    moduleUrl.href
+                )
+            ).default;
+
+        client.commands.set(
+            commandName,
+            newCommand
+        );
+
+        logger.info(
+            `Reloaded command: ${commandName}`
+        );
+
+        return {
+            success: true,
+            message:
+                `Successfully reloaded command "${commandName}"`
+        };
+
     } catch (error) {
-        logger.error(`Error reloading command "${commandName}":`, error);
-        return { success: false, message: `Error reloading command: ${error.message}` };
+        logger.error(
+            `Error reloading command "${commandName}":`,
+            error
+        );
+
+        return {
+            success: false,
+            message:
+                `Error reloading command: ${error.message}`
+        };
     }
 }
