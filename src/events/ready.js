@@ -10,7 +10,7 @@ import {
 import { reconcileLevelRoles } from "../services/levelRoleSyncService.js";
 
 // Bật/Tắt gửi thông báo khi bot khởi động
-const ENABLE_STARTUP_ANNOUNCEMENT = true;
+const ENABLE_STARTUP_ANNOUNCEMENT = false;
 
 export default {
   name: Events.ClientReady,
