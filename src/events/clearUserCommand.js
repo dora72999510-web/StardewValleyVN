@@ -1,8 +1,9 @@
 import { Events, PermissionsBitField } from 'discord.js';
 import { logger } from '../utils/logger.js';
+import { getGuildConfig } from '../services/guildConfig.js';
 
+const FETCH_SIZE = 100;
 const DELETE_DELAY = 150;
-const MAX_FETCH = 100;
 const MAX_RETRIES = 5;
 
 export default {
@@ -10,63 +11,92 @@ export default {
 
   async execute(message, client) {
     try {
-      // Bỏ qua DM và bot
-      if (!message.guild || message.author.bot) {
-        return;
-      }
+      // Không xử lý DM
+      if (!message.guild) return;
 
-      // Prefix của server
-      const guildConfig =
-        await getGuildConfigSafe(client, message.guild.id);
+      // Không cho bot khác kích hoạt command
+      if (message.author.bot) return;
+
+      const guildConfig = await getGuildConfig(
+        client,
+        message.guild.id
+      ).catch(() => null);
 
       const prefix =
         guildConfig?.prefix ||
         client.config?.bot?.prefix ||
         '!';
 
-      // Không phải prefix command
-      if (!message.content.startsWith(prefix)) {
+      const content = message.content.trim();
+
+      // Không đúng prefix
+      if (!content.startsWith(prefix)) {
         return;
       }
 
-      const parts = message.content
+      // ==========================================
+      // PARSE COMMAND
+      // ==========================================
+
+      const withoutPrefix = content
         .slice(prefix.length)
-        .trim()
-        .split(/\s+/);
+        .trim();
 
-      const commandName = parts.shift()?.toLowerCase();
+      const commandMatch = withoutPrefix.match(
+        /^clearuser(?:\s|$)/i
+      );
 
-      if (commandName !== 'clearuser') {
+      if (!commandMatch) {
         return;
       }
 
-      // =========================
-      // USER PERMISSION
-      // =========================
+      // ==========================================
+      // TARGET USER
+      // ==========================================
 
-      const member = message.member;
+      const targetUser =
+        message.mentions.users.first();
 
-      const isAdmin = member?.permissions.has(
-        PermissionsBitField.Flags.Administrator
-      );
-
-      const isModerator = member?.permissions.has(
-        PermissionsBitField.Flags.ManageMessages
-      );
-
-      if (!isAdmin && !isModerator) {
+      if (!targetUser) {
         await message.reply(
-          '❌ Bạn cần quyền **Administrator** hoặc **Manage Messages** để sử dụng lệnh này.'
+          `❌ Cú pháp đúng:\n` +
+          `\`${prefix}clearuser @user\`\n` +
+          `\`${prefix}clearuser @user 100\``
         ).catch(() => {});
 
         return;
       }
 
-      // =========================
-      // BOT PERMISSION
-      // =========================
+      // ==========================================
+      // PERMISSION USER
+      // ==========================================
 
-      const botMember = message.guild.members.me;
+      const member = message.member;
+
+      const isAdmin =
+        member?.permissions.has(
+          PermissionsBitField.Flags.Administrator
+        );
+
+      const isModerator =
+        member?.permissions.has(
+          PermissionsBitField.Flags.ManageMessages
+        );
+
+      if (!isAdmin && !isModerator) {
+        await message.reply(
+          '❌ Bạn cần quyền **Administrator** hoặc **Manage Messages**.'
+        ).catch(() => {});
+
+        return;
+      }
+
+      // ==========================================
+      // BOT PERMISSION
+      // ==========================================
+
+      const botMember =
+        message.guild.members.me;
 
       if (!botMember) {
         await message.reply(
@@ -76,139 +106,138 @@ export default {
         return;
       }
 
-      const requiredPermissions = [
-        [
-          PermissionsBitField.Flags.ViewChannel,
-          'View Channel'
-        ],
-        [
-          PermissionsBitField.Flags.ReadMessageHistory,
-          'Read Message History'
-        ],
-        [
-          PermissionsBitField.Flags.ManageMessages,
-          'Manage Messages'
-        ]
-      ];
-
-      for (const [permission, name] of requiredPermissions) {
-        if (!botMember.permissions.has(permission)) {
-          await message.reply(
-            `❌ Bot thiếu quyền **${name}**.`
-          ).catch(() => {});
-
-          return;
-        }
-      }
-
-      // =========================
-      // TARGET
-      // =========================
-
-      const targetUser =
-        message.mentions.users.first();
-
-      if (!targetUser) {
+      if (
+        !botMember.permissions.has(
+          PermissionsBitField.Flags.ViewChannel
+        )
+      ) {
         await message.reply(
-          `❌ Cú pháp:\n` +
-          `\`${prefix}clearuser @user\`\n` +
-          `\`${prefix}clearuser @user 100\``
+          '❌ Bot thiếu quyền **View Channel**.'
         ).catch(() => {});
 
         return;
       }
 
+      if (
+        !botMember.permissions.has(
+          PermissionsBitField.Flags.ReadMessageHistory
+        )
+      ) {
+        await message.reply(
+          '❌ Bot thiếu quyền **Read Message History**.'
+        ).catch(() => {});
+
+        return;
+      }
+
+      if (
+        !botMember.permissions.has(
+          PermissionsBitField.Flags.ManageMessages
+        )
+      ) {
+        await message.reply(
+          '❌ Bot thiếu quyền **Manage Messages**.'
+        ).catch(() => {});
+
+        return;
+      }
+
+      // ==========================================
+      // PARSE LIMIT
+      // ==========================================
+
       /*
-       * CỐ Ý KHÔNG CÓ:
+       * Ví dụ:
        *
-       * if (targetUser.bot) return;
+       * !clearuser @User
+       * !clearuser @User 100
        *
-       * Vì bạn yêu cầu có thể xóa message của BOT.
+       * Ta lấy toàn bộ nội dung sau "clearuser",
+       * sau đó loại mention bằng regex.
        */
 
-      // =========================
-      // LIMIT
-      // =========================
+      let remaining = withoutPrefix
+        .replace(/^clearuser/i, '')
+        .trim();
 
-      // parts[0] chính là mention của target.
-      // Bỏ mention trước khi đọc số lượng.
-      if (parts[0]) {
-        const mention = parts[0];
-      
-        const isUserMention =
-          /^<@!?\d+>$/.test(mention);
-      
-        if (isUserMention) {
-          parts.shift();
+      // Xóa mention khỏi chuỗi.
+      //
+      // Discord mention có dạng:
+      // <@123456789>
+      // hoặc
+      // <@!123456789>
+      //
+      remaining = remaining
+        .replace(
+          /^<@!?\d+>/,
+          ''
+        )
+        .trim();
+
+      let limit = Infinity;
+
+      if (remaining.length > 0) {
+        const limitMatch =
+          remaining.match(/^(\d+)$/);
+
+        if (!limitMatch) {
+          await message.reply(
+            `❌ Cú pháp đúng:\n` +
+            `\`${prefix}clearuser @user\`\n` +
+            `\`${prefix}clearuser @user 100\``
+          ).catch(() => {});
+
+          return;
         }
-      }
-      
-      // Sau khi bỏ @user:
-      // !clearuser @user
-      // parts = []
-      
-      // !clearuser @user 100
-      // parts = ["100"]
-      
-      if (parts[0]) {
-        const parsedLimit = Number(parts[0]);
-      
+
+        limit = Number(limitMatch[1]);
+
         if (
-          !Number.isSafeInteger(parsedLimit) ||
-          parsedLimit <= 0
+          !Number.isSafeInteger(limit) ||
+          limit <= 0
         ) {
           await message.reply(
             '❌ Số lượng phải là số nguyên lớn hơn 0.'
           ).catch(() => {});
-      
+
           return;
         }
-      
-        limit = parsedLimit;
-}
-
-// Không cho phép thêm tham số thừa
-if (parts.length > 1) {
-  await message.reply(
-    `❌ Cú pháp:\n` +
-    `\`${prefix}clearuser @user\`\n` +
-    `\`${prefix}clearuser @user 100\``
-  ).catch(() => {});
-
-  return;
       }
 
-      // =========================
+      // ==========================================
       // STATUS
-      // =========================
+      // ==========================================
 
-      const status = await message.reply(
-        `🔎 Đang tìm tin nhắn của **${targetUser.tag}**...`
-      ).catch(() => null);
+      const status =
+        await message.reply(
+          `🔎 Đang quét tin nhắn của **${targetUser.tag}**...`
+        ).catch(() => null);
 
       if (!status) {
         return;
       }
 
-      // =========================
-      // SCAN
-      // =========================
+      // ==========================================
+      // SCAN HISTORY
+      // ==========================================
 
       let deletedCount = 0;
       let scannedCount = 0;
-      let lastMessageId = null;
+      let before = undefined;
 
       while (deletedCount < limit) {
         const options = {
-          limit: MAX_FETCH
+          limit: FETCH_SIZE
         };
 
-        if (lastMessageId) {
-          options.before = lastMessageId;
+        if (before) {
+          options.before = before;
         }
 
         const messages =
-          await message.channel.messages.fetch(options);
+          await message.channel.messages.fetch(
+            options
+          );
 
         if (messages.size === 0) {
           break;
@@ -216,26 +245,41 @@ if (parts.length > 1) {
 
         scannedCount += messages.size;
 
-        // Chỉ lấy message của target.
-        // Target có thể là USER hoặc BOT.
-        const targetMessages = messages.filter(
-          msg => msg.author?.id === targetUser.id
-        );
+        // ========================================
+        // TARGET MESSAGES
+        // ========================================
 
-        for (const targetMessage of targetMessages.values()) {
+        const targetMessages =
+          messages.filter(
+            msg =>
+              msg.author &&
+              msg.author.id === targetUser.id
+          );
+
+        // ========================================
+        // DELETE
+        // ========================================
+
+        for (
+          const targetMessage
+          of targetMessages.values()
+        ) {
           if (deletedCount >= limit) {
             break;
           }
 
-          // Double-check ID
+          // Double-check
           if (
-            targetMessage.author?.id !== targetUser.id
+            targetMessage.author?.id !==
+            targetUser.id
           ) {
             continue;
           }
 
           const deleted =
-            await deleteMessage(targetMessage);
+            await deleteMessage(
+              targetMessage
+            );
 
           if (deleted) {
             deletedCount++;
@@ -244,28 +288,30 @@ if (parts.length > 1) {
           await sleep(DELETE_DELAY);
         }
 
+        // Đã đủ số lượng
         if (deletedCount >= limit) {
           break;
         }
 
-        // Message cũ nhất trong batch
-        const oldestMessage = messages.last();
+        // Lấy message cũ nhất
+        const oldest =
+          messages.last();
 
-        if (!oldestMessage) {
+        if (!oldest) {
           break;
         }
 
-        lastMessageId = oldestMessage.id;
+        before = oldest.id;
 
-        // Đã đến cuối lịch sử
-        if (messages.size < MAX_FETCH) {
+        // Ít hơn 100 nghĩa là hết lịch sử
+        if (messages.size < FETCH_SIZE) {
           break;
         }
       }
 
-      // =========================
+      // ==========================================
       // RESULT
-      // =========================
+      // ==========================================
 
       let result =
         `✅ Đã xóa **${deletedCount}** tin nhắn của **${targetUser.tag}**.\n` +
@@ -273,10 +319,10 @@ if (parts.length > 1) {
 
       if (limit !== Infinity) {
         result +=
-          `\n📌 Giới hạn: **${limit}** tin nhắn.`;
+          `\n📌 Giới hạn: **${limit}**`;
       } else {
         result +=
-          `\n📚 Đã quét toàn bộ lịch sử hiện có của channel.`;
+          `\n📚 Đã quét toàn bộ lịch sử channel.`;
       }
 
       await status.edit({
@@ -284,14 +330,16 @@ if (parts.length > 1) {
       }).catch(() => {});
 
       logger.info(
-        `[CLEARUSER] ${message.author.tag} -> ${targetUser.tag} | ` +
-        `deleted=${deletedCount} | scanned=${scannedCount} | ` +
+        `[CLEARUSER] ${message.author.tag} ` +
+        `-> ${targetUser.tag} ` +
+        `deleted=${deletedCount} ` +
+        `scanned=${scannedCount} ` +
         `channel=${message.channel.id}`
       );
 
     } catch (error) {
       logger.error(
-        '[CLEARUSER EVENT ERROR]',
+        '[CLEARUSER] Error:',
         error
       );
     }
@@ -299,11 +347,14 @@ if (parts.length > 1) {
 };
 
 
-// ========================================
-// DELETE MESSAGE + RATE LIMIT RETRY
-// ========================================
+// =================================================
+// DELETE MESSAGE
+// =================================================
 
-async function deleteMessage(message, attempt = 0) {
+async function deleteMessage(
+  message,
+  attempt = 0
+) {
   try {
     await message.delete();
 
@@ -311,7 +362,7 @@ async function deleteMessage(message, attempt = 0) {
 
   } catch (error) {
 
-    // Message không còn tồn tại
+    // Message đã bị xóa
     if (
       error?.code === 10008 ||
       error?.status === 404
@@ -324,8 +375,8 @@ async function deleteMessage(message, attempt = 0) {
       error?.code === 50013 ||
       error?.status === 403
     ) {
-      logger.warn(
-        `[CLEARUSER] Không có quyền xóa ${message.id}`
+      logger.error(
+        `[CLEARUSER] Bot không có quyền xóa message ${message.id}`
       );
 
       return false;
@@ -338,7 +389,7 @@ async function deleteMessage(message, attempt = 0) {
     ) {
       if (attempt >= MAX_RETRIES) {
         logger.error(
-          `[CLEARUSER] Retry rate limit thất bại: ${message.id}`
+          `[CLEARUSER] Rate limit retry failed: ${message.id}`
         );
 
         return false;
@@ -351,10 +402,12 @@ async function deleteMessage(message, attempt = 0) {
       );
 
       logger.warn(
-        `[CLEARUSER] Rate limit, chờ ${retryAfter}ms`
+        `[CLEARUSER] Rate limit. Retry after ${retryAfter}ms`
       );
 
-      await sleep(retryAfter + 500);
+      await sleep(
+        retryAfter + 500
+      );
 
       return deleteMessage(
         message,
@@ -363,7 +416,7 @@ async function deleteMessage(message, attempt = 0) {
     }
 
     logger.error(
-      `[CLEARUSER] Delete error ${message.id}:`,
+      `[CLEARUSER] Failed deleting ${message.id}:`,
       error
     );
 
@@ -372,43 +425,9 @@ async function deleteMessage(message, attempt = 0) {
 }
 
 
-// ========================================
-// GET GUILD CONFIG
-// ========================================
-
-async function getGuildConfigSafe(client, guildId) {
-  try {
-    /*
-     * Import động để event này hoàn toàn độc lập.
-     * Nếu service không tồn tại, tự fallback về "!".
-     */
-    const module =
-      await import('../services/guildConfig.js');
-
-    if (
-      typeof module.getGuildConfig !== 'function'
-    ) {
-      return null;
-    }
-
-    return await module.getGuildConfig(
-      client,
-      guildId
-    );
-
-  } catch (error) {
-    logger.warn(
-      '[CLEARUSER] Không thể đọc guild prefix, dùng !'
-    );
-
-    return null;
-  }
-}
-
-
-// ========================================
+// =================================================
 // SLEEP
-// ========================================
+// =================================================
 
 function sleep(ms) {
   return new Promise(
