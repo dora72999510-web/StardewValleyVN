@@ -130,11 +130,29 @@ export default {
       // LIMIT
       // =========================
 
-      let limit = Infinity;
-
+      // parts[0] chính là mention của target.
+      // Bỏ mention trước khi đọc số lượng.
+      if (parts[0]) {
+        const mention = parts[0];
+      
+        const isUserMention =
+          /^<@!?\d+>$/.test(mention);
+      
+        if (isUserMention) {
+          parts.shift();
+        }
+      }
+      
+      // Sau khi bỏ @user:
+      // !clearuser @user
+      // parts = []
+      
+      // !clearuser @user 100
+      // parts = ["100"]
+      
       if (parts[0]) {
         const parsedLimit = Number(parts[0]);
-
+      
         if (
           !Number.isSafeInteger(parsedLimit) ||
           parsedLimit <= 0
@@ -142,11 +160,22 @@ export default {
           await message.reply(
             '❌ Số lượng phải là số nguyên lớn hơn 0.'
           ).catch(() => {});
-
+      
           return;
         }
-
+      
         limit = parsedLimit;
+}
+
+// Không cho phép thêm tham số thừa
+if (parts.length > 1) {
+  await message.reply(
+    `❌ Cú pháp:\n` +
+    `\`${prefix}clearuser @user\`\n` +
+    `\`${prefix}clearuser @user 100\``
+  ).catch(() => {});
+
+  return;
       }
 
       // =========================
