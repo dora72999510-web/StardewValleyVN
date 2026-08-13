@@ -7,8 +7,40 @@ import { logger } from '../utils/logger.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/* =========================================================
+   CONFIG
+========================================================= */
+
 const MAX_COMMANDS = 100;
 const COMMAND_COUNT_WARN_THRESHOLD = 90;
+
+/*
+ * =========================================================
+ * CHỈ HIỂN THỊ SLASH COMMAND NÀY
+ *
+ * Kết quả khi người dùng gõ "/":
+ *
+ * /nha-phat-trien
+ * honganhrose
+ *
+ * Không sử dụng tiếng Việt có dấu trong command name.
+ * Discord yêu cầu command name phải hợp lệ theo chuẩn
+ * application command.
+ * =========================================================
+ */
+
+const DEVELOPER_COMMAND = {
+    name: 'nha-phat-trien',
+
+    description: 'honganhrose',
+
+    type: 1,
+
+    dm_permission: false,
+
+    options: [],
+};
+
 
 /* =========================================================
    SUBCOMMAND INFO
@@ -17,19 +49,27 @@ const COMMAND_COUNT_WARN_THRESHOLD = 90;
 function getSubcommandInfo(commandData) {
     const subcommands = [];
 
-    if (commandData.options) {
-        for (const option of commandData.options) {
-            if (option.type === 1) {
-                subcommands.push(option.name);
-            } else if (option.type === 2) {
-                if (option.options) {
-                    for (const subOption of option.options) {
-                        if (subOption.type === 1) {
-                            subcommands.push(
-                                `${option.name}/${subOption.name}`
-                            );
-                        }
-                    }
+    if (!commandData?.options) {
+        return subcommands;
+    }
+
+    for (const option of commandData.options) {
+
+        if (option.type === 1) {
+            subcommands.push(option.name);
+
+        } else if (option.type === 2) {
+
+            if (!option.options) {
+                continue;
+            }
+
+            for (const subOption of option.options) {
+
+                if (subOption.type === 1) {
+                    subcommands.push(
+                        `${option.name}/${subOption.name}`
+                    );
                 }
             }
         }
@@ -38,22 +78,32 @@ function getSubcommandInfo(commandData) {
     return subcommands;
 }
 
+
 /* =========================================================
    GET ALL COMMAND FILES
 ========================================================= */
 
 async function getAllFiles(directory, fileList = []) {
-    const files = await fs.readdir(directory, {
-        withFileTypes: true
-    });
+
+    const files = await fs.readdir(
+        directory,
+        {
+            withFileTypes: true
+        }
+    );
 
     for (const file of files) {
+
         const filePath = path.join(
             directory,
             file.name
         );
 
         if (file.isDirectory()) {
+
+            /*
+             * Không load modules phụ.
+             */
             if (file.name === 'modules') {
                 continue;
             }
@@ -66,6 +116,7 @@ async function getAllFiles(directory, fileList = []) {
         } else if (
             file.name.endsWith('.js')
         ) {
+
             fileList.push(filePath);
         }
     }
@@ -73,16 +124,29 @@ async function getAllFiles(directory, fileList = []) {
     return fileList;
 }
 
+
 /* =========================================================
-   LOAD COMMANDS
-   ---------------------------------------------------------
+   LOAD PREFIX COMMANDS
+   =========================================================
+   
    QUAN TRỌNG:
-   Hàm này VẪN được giữ lại vì hệ thống prefix
-   !ban, !clearuser, !warn... của bạn sử dụng
-   client.commands.
+
+   Hàm này KHÔNG đăng ký Slash Command.
+
+   Nó chỉ load command vào:
+
+       client.commands
+
+   để hệ thống prefix của bạn vẫn hoạt động:
+
+       !ban
+       !warn
+       !clearuser
+       !...
 ========================================================= */
 
 export async function loadCommands(client) {
+
     client.commands = new Collection();
 
     const commandsPath = path.join(
@@ -90,35 +154,71 @@ export async function loadCommands(client) {
         '../commands'
     );
 
-    const commandFiles =
-        await getAllFiles(commandsPath);
+    let commandFiles = [];
+
+    try {
+
+        commandFiles =
+            await getAllFiles(
+                commandsPath
+            );
+
+    } catch (error) {
+
+        if (error.code === 'ENOENT') {
+
+            logger.warn(
+                `[COMMANDS] Không tìm thấy thư mục commands: ${commandsPath}`
+            );
+
+            return client.commands;
+        }
+
+        throw error;
+    }
 
     logger.info(
-        `Found ${commandFiles.length} command files to load`
+        `[COMMANDS] Found ${commandFiles.length} command files`
     );
 
-    const uniqueCommandNames = new Set();
+    const uniqueCommandNames =
+        new Set();
 
-    for (const filePath of commandFiles) {
+    for (
+        const filePath
+        of commandFiles
+    ) {
+
         try {
-            const normalizedPath =
-                filePath.replace(/\\/g, '/');
 
-            const commandName =
-                path.basename(
-                    filePath,
-                    '.js'
+            const normalizedPath =
+                filePath.replace(
+                    /\\/g,
+                    '/'
                 );
 
             const commandDir =
-                path.dirname(filePath);
+                path.dirname(
+                    filePath
+                );
 
             const category =
-                path.basename(commandDir);
+                path.basename(
+                    commandDir
+                );
+
+            /*
+             * Dùng pathToFileURL để tương thích
+             * Windows/Linux.
+             */
+            const moduleUrl =
+                pathToFileURL(
+                    filePath
+                ).href;
 
             const commandModule =
                 await import(
-                    `file://${filePath}`
+                    moduleUrl
                 );
 
             const command =
@@ -126,11 +226,14 @@ export async function loadCommands(client) {
                 commandModule;
 
             if (
+                !command ||
                 !command.data ||
-                !command.execute
+                typeof command.execute !==
+                    'function'
             ) {
+
                 logger.warn(
-                    `Command at ${filePath} is missing required "data" or "execute" property.`
+                    `[COMMANDS] Bỏ qua ${filePath}: thiếu data hoặc execute()`
                 );
 
                 continue;
@@ -145,11 +248,24 @@ export async function loadCommands(client) {
             const primaryCommandName =
                 command.data.name;
 
+            if (!primaryCommandName) {
+
+                logger.warn(
+                    `[COMMANDS] ${filePath} không có command name`
+                );
+
+                continue;
+            }
+
+            /*
+             * Chỉ thêm command đầu tiên nếu trùng tên.
+             */
             if (
                 !uniqueCommandNames.has(
                     primaryCommandName
                 )
             ) {
+
                 uniqueCommandNames.add(
                     primaryCommandName
                 );
@@ -158,94 +274,75 @@ export async function loadCommands(client) {
                     primaryCommandName,
                     command
                 );
+
+            } else {
+
+                logger.warn(
+                    `[COMMANDS] Duplicate command ignored: ${primaryCommandName}`
+                );
             }
 
-            const subcommands =
-                getSubcommandInfo(
-                    command.data.toJSON()
+            let subcommands = [];
+
+            try {
+
+                if (
+                    typeof command.data.toJSON ===
+                    'function'
+                ) {
+
+                    subcommands =
+                        getSubcommandInfo(
+                            command.data.toJSON()
+                        );
+                }
+
+            } catch (error) {
+
+                logger.warn(
+                    `[COMMANDS] Không thể đọc subcommands của ${primaryCommandName}: ${error.message}`
                 );
+            }
 
             logger.info(
-                `Loaded command: ${primaryCommandName} from ${normalizedPath} (category: ${category})`
+                `[COMMANDS] Loaded: ${primaryCommandName} (${category})`
             );
 
             if (
                 subcommands.length > 0
             ) {
+
                 logger.info(
-                    `  - Subcommands: ${subcommands.join(', ')}`
+                    `[COMMANDS] Subcommands: ${subcommands.join(', ')}`
                 );
             }
 
         } catch (error) {
+
             logger.error(
-                `Error loading command from ${filePath}:`,
+                `[COMMANDS] Error loading command ${filePath}:`,
                 error
             );
         }
     }
 
-    const commandsWithSubcommands =
-        Array.from(
-            client.commands.values()
-        ).filter((cmd) => {
-            const subcommands =
-                getSubcommandInfo(
-                    cmd.data.toJSON()
-                );
-
-            return (
-                subcommands.length > 0
-            );
-        });
-
-    const totalSubcommands =
-        commandsWithSubcommands.reduce(
-            (total, cmd) => {
-                return (
-                    total +
-                    getSubcommandInfo(
-                        cmd.data.toJSON()
-                    ).length
-                );
-            },
-            0
-        );
-
-    const uniqueCommands =
-        new Set();
-
-    for (
-        const [
-            name,
-            command
-        ] of client.commands.entries()
-    ) {
-        if (
-            command.data &&
-            command.data.name
-        ) {
-            uniqueCommands.add(
-                command.data.name
-            );
-        }
-    }
-
     logger.info(
-        `Loaded ${uniqueCommands.size} commands`
+        `[COMMANDS] Total prefix commands loaded: ${client.commands.size}`
     );
 
     return client.commands;
 }
 
+
 /* =========================================================
-   LEGACY COMMAND PAYLOAD
-   ---------------------------------------------------------
-   Giữ lại để không phá các phần code khác nếu có import.
-   KHÔNG được sử dụng để đăng ký Slash Commands.
+   COLLECT COMMAND PAYLOADS
+   =========================================================
+   
+   Giữ lại để tương thích code cũ.
 ========================================================= */
 
 function collectCommandPayloads(client) {
+
     const commands = [];
 
     let totalSubcommands = 0;
@@ -253,17 +350,27 @@ function collectCommandPayloads(client) {
     const registeredNames =
         new Set();
 
+    if (!client?.commands) {
+
+        return {
+            commands,
+            totalSubcommands
+        };
+    }
+
     for (
         const command
         of client.commands.values()
     ) {
+
         if (
-            !command.data ||
+            !command?.data ||
             typeof command.data.toJSON !==
                 'function'
         ) {
+
             logger.warn(
-                `Command missing data or toJSON method: ${command}`
+                '[COMMANDS] Command thiếu data/toJSON, bỏ qua.'
             );
 
             continue;
@@ -273,10 +380,12 @@ function collectCommandPayloads(client) {
             command.data.name;
 
         if (
+            !commandName ||
             registeredNames.has(
                 commandName
             )
         ) {
+
             continue;
         }
 
@@ -303,20 +412,37 @@ function collectCommandPayloads(client) {
     };
 }
 
+
 /* =========================================================
    VALIDATE COMMANDS
-========================================================= */
+   ========================================================= */
 
 function validateCommands(commands) {
+
     const validationErrors = [];
 
-    for (const cmd of commands) {
+    for (
+        const cmd
+        of commands
+    ) {
+
         if (
-            cmd.name &&
+            !cmd?.name
+        ) {
+
+            validationErrors.push(
+                'Command không có name.'
+            );
+
+            continue;
+        }
+
+        if (
             cmd.name.length > 32
         ) {
+
             validationErrors.push(
-                `Command ${cmd.name} has name longer than 32 chars: "${cmd.name}" (${cmd.name.length} chars)`
+                `Command ${cmd.name} có tên dài hơn 32 ký tự.`
             );
         }
 
@@ -324,12 +450,16 @@ function validateCommands(commands) {
             cmd.description &&
             cmd.description.length > 110
         ) {
+
             validationErrors.push(
-                `Command ${cmd.name} has description longer than 110 chars: "${cmd.description}" (${cmd.description.length} chars)`
+                `Command ${cmd.name} có description dài hơn 110 ký tự.`
             );
         }
 
-        if (!cmd.options) {
+        if (
+            !cmd.options
+        ) {
+
             continue;
         }
 
@@ -337,12 +467,14 @@ function validateCommands(commands) {
             const option
             of cmd.options
         ) {
+
             if (
                 option.name &&
                 option.name.length > 32
             ) {
+
                 validationErrors.push(
-                    `Command ${cmd.name} option ${option.name} has name longer than 32 chars`
+                    `Command ${cmd.name}: option ${option.name} quá dài.`
                 );
             }
 
@@ -350,39 +482,48 @@ function validateCommands(commands) {
                 option.description &&
                 option.description.length > 110
             ) {
+
                 validationErrors.push(
-                    `Command ${cmd.name} option ${option.name} has description longer than 110 chars`
+                    `Command ${cmd.name}: description của option ${option.name} quá dài.`
                 );
             }
 
-            if (option.choices) {
+            if (
+                option.choices
+            ) {
+
                 for (
                     const choice
                     of option.choices
                 ) {
+
                     if (
                         choice.name &&
-                        choice.name.length > 110
+                        choice.name.length > 100
                     ) {
+
                         validationErrors.push(
-                            `Command ${cmd.name} option ${option.name} choice ${choice.name} has name longer than 110 chars`
+                            `Command ${cmd.name}: choice ${choice.name} quá dài.`
                         );
                     }
 
                     if (
-                        choice.value &&
                         typeof choice.value ===
                             'string' &&
                         choice.value.length > 100
                     ) {
+
                         validationErrors.push(
-                            `Command ${cmd.name} option ${option.name} choice ${choice.name} has value longer than 100 chars`
+                            `Command ${cmd.name}: value của choice ${choice.name} quá dài.`
                         );
                     }
                 }
             }
 
-            if (!option.options) {
+            if (
+                !option.options
+            ) {
+
                 continue;
             }
 
@@ -390,12 +531,14 @@ function validateCommands(commands) {
                 const subOption
                 of option.options
             ) {
+
                 if (
                     subOption.name &&
                     subOption.name.length > 32
                 ) {
+
                     validationErrors.push(
-                        `Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has name longer than 32 chars`
+                        `Command ${cmd.name}: subcommand ${subOption.name} quá dài.`
                     );
                 }
 
@@ -403,8 +546,9 @@ function validateCommands(commands) {
                     subOption.description &&
                     subOption.description.length > 110
                 ) {
+
                     validationErrors.push(
-                        `Command ${cmd.name} subcommand ${option.name} option ${subOption.name} has description longer than 110 chars`
+                        `Command ${cmd.name}: description subcommand ${subOption.name} quá dài.`
                     );
                 }
             }
@@ -414,16 +558,20 @@ function validateCommands(commands) {
     if (
         validationErrors.length > 0
     ) {
+
         logger.error(
-            'Command validation failed:'
+            '[COMMANDS] Command validation failed:'
         );
 
-        validationErrors.forEach(
-            error =>
-                logger.error(
-                    `  - ${error}`
-                )
-        );
+        for (
+            const error
+            of validationErrors
+        ) {
+
+            logger.error(
+                `  - ${error}`
+            );
+        }
 
         throw new Error(
             `Command validation failed with ${validationErrors.length} errors`
@@ -431,21 +579,23 @@ function validateCommands(commands) {
     }
 }
 
+
 /* =========================================================
    PREPARE COMMANDS
-   ---------------------------------------------------------
-   Chỉ giữ để tương thích với code cũ.
-   Không còn được dùng để register Slash Commands.
-========================================================= */
+   ========================================================= */
 
 function prepareCommandsForRegistration(
     commands,
-    { multiGuild = false } = {}
+    {
+        multiGuild = false
+    } = {}
 ) {
+
     if (
         commands.length >=
         COMMAND_COUNT_WARN_THRESHOLD
     ) {
+
         logger.warn(
             `Command count (${commands.length}) is near Discord's ${MAX_COMMANDS} limit` +
             (
@@ -460,11 +610,12 @@ function prepareCommandsForRegistration(
         commands.length <=
         MAX_COMMANDS
     ) {
+
         return commands;
     }
 
     logger.warn(
-        `Command count (${commands.length}) exceeds Discord limit (${MAX_COMMANDS}), truncating...`
+        `[COMMANDS] Command count vượt quá ${MAX_COMMANDS}. Cắt danh sách.`
     );
 
     return commands.slice(
@@ -473,121 +624,283 @@ function prepareCommandsForRegistration(
     );
 }
 
+
 /* =========================================================
-   REGISTER COMMANDS
+   REGISTER ONLY DEVELOPER COMMAND
    =========================================================
-   !!! ĐÃ TẮT HOÀN TOÀN !!!
+   
+   Đây là phần QUAN TRỌNG NHẤT.
 
-   App.js của bạn vẫn có thể gọi:
+   Discord sẽ chỉ nhận:
 
-       await this.();
+       /nha-phat-trien
 
-   nhưng hàm này KHÔNG đăng ký command.
-
-   Nó chỉ:
-   1. Xóa Global Slash Commands.
-   2. Xóa Guild Slash Commands.
-   3. Không đăng ký lại.
+   Không nhận các command trong client.commands.
 ========================================================= */
 
-export async function registerCommands(client, options = {}) {
+export async function registerCommands(
+    client,
+    options = {}
+) {
+
     try {
+
+        if (!client) {
+
+            throw new Error(
+                'Client không tồn tại.'
+            );
+        }
+
         const clientId =
             options.clientId ||
+            client.application?.id ||
             client.user?.id;
 
         if (!clientId) {
+
             logger.error(
-                '[COMMANDS] Không tìm thấy Client ID.'
+                '[COMMANDS] Không tìm thấy Application ID.'
             );
-            return;
+
+            return false;
         }
 
-        const developerCommand = {
-            name: 'phát triển bởi (developed by)',
-            description: 'honganhrose',
-            type: 1,
-            dm_permission: false,
-            options: [],
-        };
+        if (!client.rest) {
 
-        logger.info(
-            '[COMMANDS] Đang đăng ký /nha-phat-trien...'
-        );
+            throw new Error(
+                'Discord REST client chưa được khởi tạo.'
+            );
+        }
 
         /*
-         * GLOBAL
+         * Validate developer command.
          */
+        validateCommands([
+            DEVELOPER_COMMAND
+        ]);
+
+        /*
+         * =================================================
+         * GLOBAL
+         * =================================================
+         *
+         * Ghi đè toàn bộ Global Slash Commands.
+         *
+         * Kết quả:
+         *
+         * Chỉ còn /nha-phat-trien
+         */
+        logger.info(
+            '[COMMANDS] Đang cấu hình Global Slash Commands...'
+        );
+
         await client.rest.put(
-            `/applications/${clientId}/commands`,
+            Routes.applicationCommands(
+                clientId
+            ),
             {
                 body: [
-                    developerCommand,
-                ],
+                    DEVELOPER_COMMAND
+                ]
             }
         );
 
         logger.info(
-            '[COMMANDS] Đã đăng ký Global /nha-phat-trien.'
+            '[COMMANDS] ✅ Global Slash Command: /nha-phat-trien'
         );
 
+
         /*
+         * =================================================
          * GUILD
+         * =================================================
          *
-         * Dùng guild command để Discord cập nhật gần như
-         * ngay lập tức trong server.
+         * Guild command cập nhật nhanh hơn global command.
          */
         const guilds =
-            client.guilds.cache;
+            client.guilds?.cache;
 
-        for (const guild of guilds.values()) {
+        if (
+            !guilds ||
+            guilds.size === 0
+        ) {
+
+            logger.info(
+                '[COMMANDS] Bot chưa ở guild nào hoặc guild cache trống.'
+            );
+
+            return true;
+        }
+
+        let successCount = 0;
+
+        let failedCount = 0;
+
+        for (
+            const guild
+            of guilds.values()
+        ) {
 
             try {
 
+                /*
+                 * Ghi đè toàn bộ guild commands.
+                 */
                 await guild.commands.set([
-                    developerCommand,
+                    DEVELOPER_COMMAND
                 ]);
 
+                successCount++;
+
                 logger.info(
-                    `[COMMANDS] Đã đăng ký /nha-phat-trien tại ${guild.name}`
+                    `[COMMANDS] ✅ ${guild.name}: /nha-phat-trien`
+                );
+
+            } catch (error) {
+
+                failedCount++;
+
+                logger.error(
+                    `[COMMANDS] ❌ Không thể đăng ký command tại ${guild.name}:`,
+                    error
+                );
+            }
+        }
+
+        logger.info(
+            `[COMMANDS] Hoàn tất. Guild thành công: ${successCount}, thất bại: ${failedCount}`
+        );
+
+        return true;
+
+    } catch (error) {
+
+        logger.error(
+            '[COMMANDS] Lỗi registerCommands:',
+            error
+        );
+
+        return false;
+    }
+}
+
+
+/* =========================================================
+   REMOVE ALL SLASH COMMANDS
+   =========================================================
+   
+   Hàm này để dùng nếu sau này bạn muốn tắt hoàn toàn
+   Slash Command.
+========================================================= */
+
+export async function clearAllSlashCommands(
+    client
+) {
+
+    try {
+
+        const clientId =
+            client.application?.id ||
+            client.user?.id;
+
+        if (!clientId) {
+
+            throw new Error(
+                'Không tìm thấy Application ID.'
+            );
+        }
+
+        /*
+         * Xóa Global Commands.
+         */
+        await client.rest.put(
+            Routes.applicationCommands(
+                clientId
+            ),
+            {
+                body: []
+            }
+        );
+
+        logger.info(
+            '[COMMANDS] ✅ Đã xóa toàn bộ Global Slash Commands.'
+        );
+
+
+        /*
+         * Xóa Guild Commands.
+         */
+        for (
+            const guild
+            of client.guilds.cache.values()
+        ) {
+
+            try {
+
+                await guild.commands.set([]);
+
+                logger.info(
+                    `[COMMANDS] ✅ Đã xóa Slash Commands tại ${guild.name}`
                 );
 
             } catch (error) {
 
                 logger.error(
-                    `[COMMANDS] Không thể đăng ký command tại ${guild.name}:`,
+                    `[COMMANDS] ❌ Không thể xóa command tại ${guild.name}:`,
                     error
                 );
-
             }
         }
+
+        return true;
 
     } catch (error) {
 
         logger.error(
-            '[COMMANDS] Lỗi đăng ký Slash Commands:',
+            '[COMMANDS] Lỗi khi xóa Slash Commands:',
             error
         );
 
+        return false;
     }
 }
 
+
 /* =========================================================
-   RELOAD COMMAND
-   ---------------------------------------------------------
-   Giữ nguyên để hệ thống prefix có thể reload command.
+   RELOAD PREFIX COMMAND
+   =========================================================
+   
+   Dùng cho:
+   
+       !reload ...
+   
+   hoặc hệ thống reload command hiện tại của bot.
 ========================================================= */
 
 export async function reloadCommand(
     client,
     commandName
 ) {
+
+    if (
+        !client?.commands
+    ) {
+
+        return {
+            success: false,
+            message:
+                'client.commands chưa được khởi tạo.'
+        };
+    }
+
     const command =
         client.commands.get(
             commandName
         );
 
     if (!command) {
+
         return {
             success: false,
             message:
@@ -595,7 +908,19 @@ export async function reloadCommand(
         };
     }
 
+    if (
+        !command.filePath
+    ) {
+
+        return {
+            success: false,
+            message:
+                `Command "${commandName}" không có filePath`
+        };
+    }
+
     try {
+
         const commandPath =
             path.resolve(
                 command.filePath
@@ -606,17 +931,39 @@ export async function reloadCommand(
                 commandPath
             );
 
+        /*
+         * Cache busting.
+         */
         moduleUrl.searchParams.set(
             't',
             Date.now().toString()
         );
 
+        const imported =
+            await import(
+                moduleUrl.href
+            );
+
         const newCommand =
-            (
-                await import(
-                    moduleUrl.href
-                )
-            ).default;
+            imported.default ||
+            imported;
+
+        if (
+            !newCommand?.data ||
+            typeof newCommand.execute !==
+                'function'
+        ) {
+
+            throw new Error(
+                'Command mới không có data hoặc execute().'
+            );
+        }
+
+        newCommand.category =
+            command.category;
+
+        newCommand.filePath =
+            command.filePath;
 
         client.commands.set(
             commandName,
@@ -624,7 +971,7 @@ export async function reloadCommand(
         );
 
         logger.info(
-            `Reloaded command: ${commandName}`
+            `[COMMANDS] Reloaded command: ${commandName}`
         );
 
         return {
@@ -634,8 +981,9 @@ export async function reloadCommand(
         };
 
     } catch (error) {
+
         logger.error(
-            `Error reloading command "${commandName}":`,
+            `[COMMANDS] Error reloading command "${commandName}":`,
             error
         );
 
@@ -646,3 +994,15 @@ export async function reloadCommand(
         };
     }
 }
+
+
+/* =========================================================
+   EXPORT DEVELOPER COMMAND
+   =========================================================
+   
+   Có thể import nếu app.js cần dùng.
+========================================================= */
+
+export {
+    DEVELOPER_COMMAND
+};
