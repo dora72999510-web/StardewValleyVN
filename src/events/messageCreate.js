@@ -138,7 +138,7 @@ async function handleProtectedChannels(message) {
 
     // Log channel
     const logChannel = await message.guild.channels
-      .fetch('1510183155762597990')
+      .fetch('1510871300132835368')
       .catch(() => null);
 
     if (logChannel?.isTextBased()) {
