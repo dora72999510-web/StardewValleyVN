@@ -85,14 +85,9 @@ class TitanBot extends Client {
       await this.login(this.config.bot.token);
       startupLog('Discord login successful');
       
-      startupLog('Registering slash commands...');
-      await this.registerCommands();
-      if (this.config.bot.multiGuild) {
-        startupLog('Multi-guild mode enabled — slash commands registered globally');
-      } else if (this.config.bot.guildId) {
-        startupLog(`Single-guild mode — slash commands registered for guild ${this.config.bot.guildId}`);
-      }
-      startupLog('Slash commands registration complete');
+      // Slash Commands đã được vô hiệu hóa.
+      // Bot chỉ sử dụng Prefix Commands như !ban, !clearuser, ...
+      startupLog('Slash commands registration disabled.');
       
       const databaseMode = dbStatus.isDegraded
         ? 'Optional in-memory mode (data resets after restart)'
