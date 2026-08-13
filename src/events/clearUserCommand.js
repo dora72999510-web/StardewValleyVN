@@ -3,39 +3,24 @@ import { logger } from '../utils/logger.js';
 import { getGuildConfig } from '../services/guildConfig.js';
 
 const FETCH_LIMIT = 100;
-const DELETE_DELAY = 200;
+const DELETE_DELAY = 150;
 const MAX_RETRIES = 5;
-
-// ======================================================
-// CẤU HÌNH
-// ======================================================
-
-// Tên title của Embed cần xóa.
-// Nếu bot thay đổi title, sửa dòng này.
-const TARGET_EMBED_TITLE = 'Ảnh gái xinh';
 
 export default {
   name: Events.MessageCreate,
 
   async execute(message, client) {
     try {
-      // ==================================================
+      // ==========================================
       // BASIC CHECK
-      // ==================================================
+      // ==========================================
 
-      // Không xử lý DM
-      if (!message.guild) {
-        return;
-      }
+      if (!message.guild) return;
+      if (message.author.bot) return;
 
-      // Không cho bot khác kích hoạt command
-      if (message.author.bot) {
-        return;
-      }
-
-      // ==================================================
+      // ==========================================
       // PREFIX
-      // ==================================================
+      // ==========================================
 
       let guildConfig = null;
 
@@ -44,10 +29,8 @@ export default {
           client,
           message.guild.id
         );
-      } catch (error) {
-        logger.warn(
-          '[CLEARUSER] Không lấy được guild config, dùng prefix !'
-        );
+      } catch {
+        // Fallback về !
       }
 
       const prefix =
@@ -61,53 +44,24 @@ export default {
         return;
       }
 
-      // ==================================================
-      // COMMAND CHECK
-      // ==================================================
+      // ==========================================
+      // PARSE COMMAND
+      // ==========================================
 
-      const commandContent = content
+      const commandText = content
         .slice(prefix.length)
         .trim();
 
       const commandMatch =
-        commandContent.match(/^clearuser(?:\s|$)/i);
+        commandText.match(/^clearuser(?:\s|$)/i);
 
       if (!commandMatch) {
         return;
       }
 
-      // ==================================================
-      // TARGET
-      // ==================================================
-
-      const targetBot =
-        message.mentions.users.first();
-
-      if (!targetBot) {
-        await message.reply(
-          [
-            '❌ Bạn chưa mention bot cần dọn.',
-            '',
-            `Cú pháp: \`${prefix}clearuser @bot\``,
-            `Hoặc: \`${prefix}clearuser @bot 100\``
-          ].join('\n')
-        ).catch(() => {});
-
-        return;
-      }
-
-      // Chỉ cho phép target là BOT
-      if (!targetBot.bot) {
-        await message.reply(
-          '❌ Lệnh này chỉ dùng để dọn phản hồi của **bot**.'
-        ).catch(() => {});
-
-        return;
-      }
-
-      // ==================================================
-      // PERMISSION NGƯỜI DÙNG
-      // ==================================================
+      // ==========================================
+      // PERMISSION
+      // ==========================================
 
       const member = message.member;
 
@@ -123,144 +77,133 @@ export default {
 
       if (!isAdmin && !isModerator) {
         await message.reply(
-          '❌ Bạn cần quyền **Administrator** hoặc **Manage Messages** để sử dụng lệnh này.'
+          '❌ Bạn cần quyền **Administrator** hoặc **Manage Messages**.'
         ).catch(() => {});
 
         return;
       }
 
-      // ==================================================
-      // BOT PERMISSION
-      // ==================================================
+      // ==========================================
+      // TARGET USER
+      // ==========================================
 
-      const botMember =
-        message.guild.members.me;
+      const targetUser =
+        message.mentions.users.first();
 
-      if (!botMember) {
+      if (!targetUser) {
         await message.reply(
-          '❌ Không thể xác định bot trong server.'
+          [
+            '❌ Bạn chưa mention người dùng.',
+            '',
+            `Cú pháp: \`${prefix}clearuser @user "nội dung"\``,
+            `Ví dụ: \`${prefix}clearuser @Yubabe "cá"\``
+          ].join('\n')
         ).catch(() => {});
 
         return;
       }
 
-      if (
-        !botMember.permissions.has(
-          PermissionsBitField.Flags.ViewChannel
-        )
-      ) {
-        await message.reply(
-          '❌ Bot thiếu quyền **View Channel**.'
-        ).catch(() => {});
-
-        return;
-      }
-
-      if (
-        !botMember.permissions.has(
-          PermissionsBitField.Flags.ReadMessageHistory
-        )
-      ) {
-        await message.reply(
-          '❌ Bot thiếu quyền **Read Message History**.'
-        ).catch(() => {});
-
-        return;
-      }
-
-      if (
-        !botMember.permissions.has(
-          PermissionsBitField.Flags.ManageMessages
-        )
-      ) {
-        await message.reply(
-          '❌ Bot thiếu quyền **Manage Messages**.'
-        ).catch(() => {});
-
-        return;
-      }
-
-      // ==================================================
-      // PARSE LIMIT
-      // ==================================================
+      // ==========================================
+      // GET TEXT TO DELETE
+      // ==========================================
 
       /*
+       * Lấy phần sau mention.
+       *
        * Ví dụ:
        *
-       * !clearuser @Yubabe
-       * !clearuser @Yubabe 100
+       * !clearuser @Yubabe "cá"
+       *
+       * targetUser = Yubabe
+       * searchText = cá
        */
 
-      let remaining =
-        commandContent
-          .replace(/^clearuser/i, '')
-          .trim();
+      const mentionRegex =
+        new RegExp(
+          `^clearuser\\s+<@!?${targetUser.id}>\\s+(.+)$`,
+          'i'
+        );
 
-      // Xóa mention đầu tiên khỏi chuỗi.
-      remaining = remaining
-        .replace(/^<@!?\d+>/, '')
-        .trim();
+      const match =
+        commandText.match(mentionRegex);
 
-      let limit = Infinity;
+      if (!match) {
+        await message.reply(
+          [
+            '❌ Bạn chưa nhập nội dung cần xóa.',
+            '',
+            `Ví dụ: \`${prefix}clearuser @Yubabe "cá"\``
+          ].join('\n')
+        ).catch(() => {});
 
-      if (remaining.length > 0) {
-        // Chỉ cho phép một số nguyên.
-        const match =
-          remaining.match(/^(\d+)$/);
-
-        if (!match) {
-          await message.reply(
-            [
-              '❌ Cú pháp không đúng.',
-              '',
-              `\`${prefix}clearuser @bot\``,
-              `\`${prefix}clearuser @bot 100\``
-            ].join('\n')
-          ).catch(() => {});
-
-          return;
-        }
-
-        limit = Number(match[1]);
-
-        if (
-          !Number.isSafeInteger(limit) ||
-          limit <= 0
-        ) {
-          await message.reply(
-            '❌ Số lượng phải là số nguyên lớn hơn 0.'
-          ).catch(() => {});
-
-          return;
-        }
+        return;
       }
 
-      // ==================================================
+      let searchText =
+        match[1].trim();
+
+      // ==========================================
+      // REMOVE QUOTES
+      // ==========================================
+
+      /*
+       * Cho phép:
+       *
+       * "cá"
+       * 'cá'
+       * cá
+       */
+
+      if (
+        (
+          searchText.startsWith('"') &&
+          searchText.endsWith('"')
+        ) ||
+        (
+          searchText.startsWith("'") &&
+          searchText.endsWith("'")
+        )
+      ) {
+        searchText =
+          searchText.slice(
+            1,
+            -1
+          );
+      }
+
+      searchText = searchText.trim();
+
+      if (!searchText) {
+        await message.reply(
+          '❌ Nội dung cần xóa không được để trống.'
+        ).catch(() => {});
+
+        return;
+      }
+
+      // ==========================================
       // STATUS
-      // ==================================================
+      // ==========================================
 
       const status =
         await message.reply(
-          [
-            `🔎 Đang tìm phản hồi **"${TARGET_EMBED_TITLE}"**`,
-            `của **${targetBot.tag}**...`
-          ].join('\n')
+          `🔎 Đang tìm message chính xác **"${searchText}"** của **${targetUser.tag}**...`
         ).catch(() => null);
 
       if (!status) {
         return;
       }
 
-      // ==================================================
-      // SCAN
-      // ==================================================
+      // ==========================================
+      // SCAN HISTORY
+      // ==========================================
 
       let deletedCount = 0;
       let scannedCount = 0;
       let before = undefined;
       let reachedEnd = false;
 
-      while (deletedCount < limit) {
+      while (true) {
         const fetchOptions = {
           limit: FETCH_LIMIT
         };
@@ -274,7 +217,6 @@ export default {
             fetchOptions
           );
 
-        // Không còn message
         if (messages.size === 0) {
           reachedEnd = true;
           break;
@@ -282,65 +224,61 @@ export default {
 
         scannedCount += messages.size;
 
-        // ==================================================
-        // LỌC MESSAGE
-        // ==================================================
+        // ========================================
+        // EXACT MATCH
+        // ========================================
 
-        const targetMessages =
+        const matchingMessages =
           messages.filter((msg) => {
 
-            // 1. Phải do đúng bot được mention gửi
+            // Phải đúng user
             if (
-              msg.author?.id !== targetBot.id
+              msg.author?.id !==
+              targetUser.id
             ) {
               return false;
             }
 
-            // 2. Phải là bot
-            if (!msg.author?.bot) {
+            // Phải là message text
+            if (
+              typeof msg.content !== 'string'
+            ) {
               return false;
             }
 
-            // 3. Phải có Embed
-            if (!msg.embeds?.length) {
-              return false;
-            }
+            /*
+             * EXACT MATCH
+             *
+             * toLocaleLowerCase() giúp:
+             *
+             * "cá"
+             * "Cá"
+             * "CÁ"
+             *
+             * được coi là giống nhau.
+             *
+             * Không dùng includes(),
+             * nên "con cá" sẽ KHÔNG match.
+             */
 
-            // 4. Phải có Embed title "Ảnh gái xinh"
-            const hasTargetEmbed =
-              msg.embeds.some(
-                (embed) =>
-                  embed.title ===
-                  TARGET_EMBED_TITLE
-              );
-
-            if (!hasTargetEmbed) {
-              return false;
-            }
-
-            return true;
+            return (
+              msg.content
+                .trim()
+                .toLocaleLowerCase() ===
+              searchText
+                .trim()
+                .toLocaleLowerCase()
+            );
           });
 
-        // ==================================================
-        // DELETE
-        // ==================================================
+        // ========================================
+        // DELETE MATCHING MESSAGES
+        // ========================================
 
         for (
           const targetMessage
-          of targetMessages.values()
+          of matchingMessages.values()
         ) {
-          if (deletedCount >= limit) {
-            break;
-          }
-
-          // Kiểm tra lần cuối
-          if (
-            targetMessage.author?.id !==
-            targetBot.id
-          ) {
-            continue;
-          }
-
           const deleted =
             await deleteMessageWithRetry(
               targetMessage
@@ -355,13 +293,9 @@ export default {
           );
         }
 
-        if (deletedCount >= limit) {
-          break;
-        }
-
-        // ==================================================
+        // ========================================
         // PAGINATION
-        // ==================================================
+        // ========================================
 
         const oldestMessage =
           messages.last();
@@ -371,9 +305,9 @@ export default {
           break;
         }
 
-        before = oldestMessage.id;
+        before =
+          oldestMessage.id;
 
-        // Đã đến cuối lịch sử
         if (
           messages.size < FETCH_LIMIT
         ) {
@@ -382,18 +316,22 @@ export default {
         }
       }
 
-      // ==================================================
+      // ==========================================
       // RESULT
-      // ==================================================
+      // ==========================================
 
-      let result =
-        `✅ Đã xóa **${deletedCount}** phản hồi của **${targetBot.tag}**.\n` +
-        `🎯 Chỉ xóa Embed: **${TARGET_EMBED_TITLE}**\n` +
-        `🔎 Đã quét **${scannedCount}** message.`;
+      let result;
 
-      if (limit !== Infinity) {
-        result +=
-          `\n📌 Giới hạn: **${limit}**`;
+      if (deletedCount === 0) {
+        result =
+          `⚠️ Không tìm thấy message chính xác **"${searchText}"** ` +
+          `của **${targetUser.tag}** trong channel này.\n` +
+          `🔎 Đã quét **${scannedCount}** message.`;
+      } else {
+        result =
+          `✅ Đã xóa **${deletedCount}** message của **${targetUser.tag}**.\n` +
+          `🎯 Nội dung chính xác: **${searchText}**\n` +
+          `🔎 Đã quét **${scannedCount}** message.`;
       }
 
       if (reachedEnd) {
@@ -405,20 +343,20 @@ export default {
         content: result
       }).catch(() => {});
 
-      // ==================================================
+      // ==========================================
       // LOG
-      // ==================================================
+      // ==========================================
 
       logger.info(
         [
           '[CLEARUSER]',
           `moderator=${message.author.tag}`,
-          `target=${targetBot.tag}`,
-          `targetId=${targetBot.id}`,
+          `target=${targetUser.tag}`,
+          `targetId=${targetUser.id}`,
+          `search="${searchText}"`,
           `deleted=${deletedCount}`,
           `scanned=${scannedCount}`,
-          `channel=${message.channel.id}`,
-          `title="${TARGET_EMBED_TITLE}"`
+          `channel=${message.channel.id}`
         ].join(' | ')
       );
 
@@ -433,7 +371,7 @@ export default {
 
 
 // ======================================================
-// DELETE MESSAGE
+// DELETE MESSAGE WITH RETRY
 // ======================================================
 
 async function deleteMessageWithRetry(
@@ -447,10 +385,7 @@ async function deleteMessageWithRetry(
 
   } catch (error) {
 
-    // ----------------------------------------------
     // Message đã bị xóa
-    // ----------------------------------------------
-
     if (
       error?.code === 10008 ||
       error?.status === 404
@@ -458,25 +393,19 @@ async function deleteMessageWithRetry(
       return false;
     }
 
-    // ----------------------------------------------
     // Không có quyền
-    // ----------------------------------------------
-
     if (
       error?.code === 50013 ||
       error?.status === 403
     ) {
       logger.error(
-        `[CLEARUSER] Bot không có quyền xóa message ${message.id}.`
+        `[CLEARUSER] Không có quyền xóa ${message.id}.`
       );
 
       return false;
     }
 
-    // ----------------------------------------------
     // Rate limit
-    // ----------------------------------------------
-
     if (
       error?.status === 429 ||
       error?.code === 429
@@ -485,7 +414,7 @@ async function deleteMessageWithRetry(
         attempt >= MAX_RETRIES
       ) {
         logger.error(
-          `[CLEARUSER] Quá số lần retry rate limit: ${message.id}`
+          `[CLEARUSER] Rate limit retry thất bại: ${message.id}`
         );
 
         return false;
@@ -499,7 +428,7 @@ async function deleteMessageWithRetry(
         );
 
       logger.warn(
-        `[CLEARUSER] Rate limit. Chờ ${retryAfter}ms...`
+        `[CLEARUSER] Rate limit. Chờ ${retryAfter}ms.`
       );
 
       await sleep(
@@ -512,12 +441,8 @@ async function deleteMessageWithRetry(
       );
     }
 
-    // ----------------------------------------------
-    // Error khác
-    // ----------------------------------------------
-
     logger.error(
-      `[CLEARUSER] Không thể xóa message ${message.id}:`,
+      `[CLEARUSER] Không thể xóa ${message.id}:`,
       error
     );
 
