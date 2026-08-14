@@ -44,47 +44,82 @@ import {
 
 
 /* =========================================================
-   CONFIG
+   PREFIX COMMAND CONFIG
 ========================================================= */
 
 /*
- * CHỈ cho phép 2 PREFIX COMMAND:
+ * CHỈ CHO PHÉP:
  *
  * !faq
  * !clearuser
+ * !lyric
  *
- * Tất cả prefix command khác sẽ bị bỏ qua.
+ * Mọi prefix khác sẽ bị bỏ qua.
  */
+
 const ALLOWED_PREFIX_COMMANDS = new Set([
   'faq',
   'clearuser',
+  'lyric',
 ]);
 
+
+/* =========================================================
+   LYRIC CONFIG
+========================================================= */
+
+/*
+ * !lyric CHỈ được sử dụng trong channel này.
+ *
+ * ƯU TIÊN:
+ *
+ * 1. process.env.LYRIC_CHANNEL_ID
+ * 2. ID bên dưới
+ *
+ * Ví dụ .env:
+ *
+ * LYRIC_CHANNEL_ID=123456789012345678
+ *
+ * Nếu muốn cố định trực tiếp trong code,
+ * thay YOUR_LYRIC_CHANNEL_ID bằng ID channel.
+ */
+
+const LYRIC_CHANNEL_ID =
+  process.env.LYRIC_CHANNEL_ID ||
+  'YOUR_LYRIC_CHANNEL_ID';
+
+
+/* =========================================================
+   XP CONFIG
+========================================================= */
 
 const XP_RATE_LIMIT_ATTEMPTS = 12;
 const XP_RATE_LIMIT_WINDOW_MS = 10000;
 
 
-/*
- * Protected channels
- */
+/* =========================================================
+   PROTECTED CHANNELS
+========================================================= */
+
 const PROTECTED_CHANNELS = [
   '1521007503263928341',
 ];
 
 
-/*
- * Role được miễn protected channel
- */
+/* =========================================================
+   EXEMPT ROLES
+========================================================= */
+
 const EXEMPT_ROLE_IDS = [
   '1510657849112399928',
   '1514302887419842590',
 ];
 
 
-/*
- * Timeout protected channel
- */
+/* =========================================================
+   PROTECTED TIMEOUT
+========================================================= */
+
 const PROTECTED_TIMEOUT =
   24 * 60 * 60 * 1000;
 
@@ -100,53 +135,61 @@ export default {
 
     try {
 
-      /*
-       * Bỏ qua DM
-       * Bỏ qua bot
-       */
+      /* =====================================================
+         BASIC CHECK
+      ===================================================== */
 
-      if (
-        !message.guild ||
-        message.author.bot
-      ) {
+      if (!message) {
+        return;
+      }
+
+      if (!message.guild) {
+        return;
+      }
+
+      if (message.author?.bot) {
         return;
       }
 
 
-      /* ===================================================
+      /* =====================================================
          AUTO ROLE
-      =================================================== */
+         -----------------------------------------------------
+         Không để AutoRole lỗi làm dừng MessageCreate.
+      ===================================================== */
 
-      await handleAutoRole(message);
+      try {
 
+        await handleAutoRole(message);
 
-      /* ===================================================
-         FAQ
-         ---------------------------------------------------
-         FAQ được xử lý trước prefix.
-      =================================================== */
+      } catch (error) {
 
-      if (
-        await handleFaq(message)
-      ) {
-        return;
+        logger.error(
+          'AutoRole Error:',
+          error
+        );
+
       }
 
 
-      /* ===================================================
-         PROTECTED CHANNELS
-      =================================================== */
+      /* =====================================================
+         PROTECTED CHANNEL
+         -----------------------------------------------------
+         Ưu tiên cao nhất.
+      ===================================================== */
 
       if (
         await handleProtectedChannels(message)
       ) {
+
         return;
+
       }
 
 
-      /* ===================================================
+      /* =====================================================
          COUNTING GAME
-      =================================================== */
+      ===================================================== */
 
       if (
         await handleCountingGame(
@@ -154,41 +197,86 @@ export default {
           client
         )
       ) {
+
         return;
+
       }
 
 
-      /* ===================================================
+      /* =====================================================
          PREFIX COMMANDS
-         ---------------------------------------------------
-         CHỈ:
-
+         -----------------------------------------------------
+         QUAN TRỌNG:
+         Prefix được xử lý TRƯỚC FAQ responder.
+         
+         Cho phép:
+         
          !faq
          !clearuser
+         !lyric
+      ===================================================== */
 
-         Các lệnh prefix khác sẽ bị bỏ qua.
-      =================================================== */
+      const wasPrefixCommand =
+        await handlePrefixCommand(
+          message,
+          client
+        );
 
-      await handlePrefixCommand(
-        message,
-        client
-      );
+      /*
+       * Nếu message là prefix command thì dừng.
+       *
+       * Như vậy !faq sẽ không bị faqResponder
+       * xử lý thêm một lần nữa.
+       */
+
+      if (wasPrefixCommand) {
+
+        return;
+
+      }
 
 
-      /* ===================================================
+      /* =====================================================
+         FAQ AUTO RESPONDER
+         -----------------------------------------------------
+         Chỉ xử lý tin nhắn thông thường.
+      ===================================================== */
+
+      try {
+
+        if (
+          await handleFaq(message)
+        ) {
+
+          return;
+
+        }
+
+      } catch (error) {
+
+        logger.error(
+          'FAQ Responder Error:',
+          error
+        );
+
+      }
+
+
+      /* =====================================================
          LEVELING
-      =================================================== */
+      ===================================================== */
 
       await handleLeveling(
         message,
         client
       );
 
-    } catch (err) {
+
+    } catch (error) {
 
       logger.error(
         'MessageCreate Error:',
-        err
+        error
       );
 
     }
@@ -205,22 +293,20 @@ async function handleProtectedChannels(message) {
 
   try {
 
-    /*
-     * Không phải protected channel
-     */
-
     if (
       !PROTECTED_CHANNELS.includes(
         message.channel.id
       )
     ) {
+
       return false;
+
     }
 
 
-    /*
-     * Fetch member
-     */
+    /* =====================================================
+       FETCH MEMBER
+    ===================================================== */
 
     const member =
       await message.guild.members
@@ -229,7 +315,9 @@ async function handleProtectedChannels(message) {
 
 
     if (!member) {
+
       return true;
+
     }
 
 
@@ -241,11 +329,15 @@ async function handleProtectedChannels(message) {
 
       member.permissions.has(
         PermissionsBitField.Flags.Administrator
-      ) ||
+      )
+
+      ||
 
       member.permissions.has(
         PermissionsBitField.Flags.ManageMessages
-      ) ||
+      )
+
+      ||
 
       member.roles.cache.some(
         role =>
@@ -372,18 +464,18 @@ async function handleProtectedChannels(message) {
         warn
           .delete()
           .catch(() => {}),
-
       5000
     );
 
 
     return true;
 
-  } catch (err) {
+
+  } catch (error) {
 
     logger.error(
       'Protected Channel Error:',
-      err
+      error
     );
 
     return true;
@@ -411,12 +503,9 @@ async function handleCountingGame(
       );
 
 
-    /*
-     * Counting không bật
-     */
-
     if (
-      !config?.enabled ||
+      !config?.enabled
+      ||
       message.channel.id !==
         config.channelId
     ) {
@@ -427,7 +516,7 @@ async function handleCountingGame(
 
 
     /* =====================================================
-       VALIDATE
+       VALIDATE MESSAGE
     ===================================================== */
 
     const valid =
@@ -438,7 +527,8 @@ async function handleCountingGame(
 
 
     const invalid =
-      !valid ||
+      !valid
+      ||
       message.author.id ===
         config.lastUserId;
 
@@ -455,8 +545,11 @@ async function handleCountingGame(
 
 
       await saveCountingGameConfig(
+
         client,
+
         message.guild.id,
+
         {
 
           ...config,
@@ -471,6 +564,7 @@ async function handleCountingGame(
             0,
 
         }
+
       );
 
 
@@ -488,7 +582,6 @@ async function handleCountingGame(
           msg
             .delete()
             .catch(() => {}),
-
         10000
       );
 
@@ -503,19 +596,24 @@ async function handleCountingGame(
     ===================================================== */
 
     await recordCorrectCount(
+
       client,
+
       message.guild.id,
+
       message.author.id
+
     );
 
 
     return true;
 
-  } catch (err) {
+
+  } catch (error) {
 
     logger.error(
       'Counting Game Error:',
-      err
+      error
     );
 
     return false;
@@ -528,12 +626,10 @@ async function handleCountingGame(
 /* =========================================================
    PREFIX COMMANDS
    ---------------------------------------------------------
-   CHỈ CÒN:
-
-   !faq
-   !clearuser
-
-   Mọi prefix command khác đều bị chặn.
+   RETURN:
+   
+   true  = đã xử lý prefix command
+   false = không phải prefix command
 ========================================================= */
 
 async function handlePrefixCommand(
@@ -544,7 +640,7 @@ async function handlePrefixCommand(
   try {
 
     /* =====================================================
-       GUILD CONFIG
+       GET GUILD CONFIG
     ===================================================== */
 
     const guildConfig =
@@ -565,7 +661,7 @@ async function handlePrefixCommand(
 
 
     /* =====================================================
-       PARSE
+       PARSE PREFIX
     ===================================================== */
 
     const parsed =
@@ -576,11 +672,13 @@ async function handlePrefixCommand(
 
 
     /*
-     * Không phải prefix command
+     * Không phải prefix command.
      */
 
     if (!parsed) {
-      return;
+
+      return false;
+
     }
 
 
@@ -590,22 +688,12 @@ async function handlePrefixCommand(
     } = parsed;
 
 
-    /*
-     * Normalize command name.
-     *
-     * Ví dụ:
-     *
-     * FAQ
-     * Faq
-     * faq
-     *
-     * đều thành faq.
-     */
+    /* =====================================================
+       NORMALIZE
+    ===================================================== */
 
     const normalizedCommandName =
-      String(
-        commandName
-      )
+      String(commandName)
         .trim()
         .toLowerCase();
 
@@ -613,14 +701,13 @@ async function handlePrefixCommand(
     /* =====================================================
        HARD WHITELIST
        -----------------------------------------------------
-       Đây là phần quan trọng nhất.
-
-       Nếu không nằm trong:
-
-       faq
-       clearuser
-
-       => DỪNG NGAY.
+       CHỈ:
+       
+       !faq
+       !clearuser
+       !lyric
+       
+       Các command khác bị bỏ qua hoàn toàn.
     ===================================================== */
 
     if (
@@ -629,7 +716,95 @@ async function handlePrefixCommand(
       )
     ) {
 
-      return;
+      return true;
+
+    }
+
+
+    /* =====================================================
+       LYRIC CHANNEL CHECK
+    ===================================================== */
+
+    if (
+      normalizedCommandName === 'lyric'
+    ) {
+
+      /*
+       * Nếu chưa cấu hình channel thì báo lỗi trong log
+       * thay vì để command chạy khắp server.
+       */
+
+      if (
+        !LYRIC_CHANNEL_ID ||
+        LYRIC_CHANNEL_ID ===
+          'YOUR_LYRIC_CHANNEL_ID'
+      ) {
+
+        logger.error(
+          '[LYRIC] Chưa cấu hình LYRIC_CHANNEL_ID.'
+        );
+
+        await message.channel.send({
+
+          embeds: [
+
+            createEmbed({
+
+              title:
+                '⚠️ Lyric chưa được cấu hình',
+
+              description:
+                'Admin chưa cấu hình kênh sử dụng lệnh `!lyric`.',
+
+              color:
+                'error',
+
+            }),
+
+          ],
+
+        }).catch(() => {});
+
+
+        return true;
+
+      }
+
+
+      /*
+       * Chỉ cho phép lyric ở đúng channel.
+       */
+
+      if (
+        message.channel.id !==
+          LYRIC_CHANNEL_ID
+      ) {
+
+        await message.channel.send({
+
+          embeds: [
+
+            createEmbed({
+
+              title:
+                '🎵 Lệnh Lyric',
+
+              description:
+                `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
+
+              color:
+                'info',
+
+            }),
+
+          ],
+
+        }).catch(() => {});
+
+
+        return true;
+
+      }
 
     }
 
@@ -644,20 +819,16 @@ async function handlePrefixCommand(
       );
 
 
-    /*
-     * Kiểm tra alias sau khi resolve.
-     *
-     * Nếu alias trỏ tới command khác ngoài
-     * faq / clearuser thì cũng chặn.
-     */
-
     const normalizedResolvedName =
-      String(
-        resolvedName
-      )
+      String(resolvedName)
         .trim()
         .toLowerCase();
 
+
+    /*
+     * Không cho alias chuyển sang command
+     * ngoài whitelist.
+     */
 
     if (
       !ALLOWED_PREFIX_COMMANDS.has(
@@ -665,7 +836,11 @@ async function handlePrefixCommand(
       )
     ) {
 
-      return;
+      logger.warn(
+        `Blocked prefix alias: ${normalizedCommandName} -> ${normalizedResolvedName}`
+      );
+
+      return true;
 
     }
 
@@ -682,11 +857,49 @@ async function handlePrefixCommand(
 
     if (!command) {
 
-      logger.debug(
-        `Allowed prefix command "${resolvedName}" is not loaded.`
+      logger.warn(
+        `[PREFIX] Command "${resolvedName}" chưa được load vào client.commands.`
       );
 
-      return;
+
+      /*
+       * Chỉ báo cho lyric để dễ debug.
+       *
+       * !faq và !clearuser giữ im lặng nếu command
+       * chưa được load.
+       */
+
+      if (
+        normalizedResolvedName ===
+        'lyric'
+      ) {
+
+        await message.channel.send({
+
+          embeds: [
+
+            createEmbed({
+
+              title:
+                '❌ Lyric chưa được load',
+
+              description:
+                'Bot không tìm thấy command `lyric` trong `client.commands`.\n' +
+                'Hãy kiểm tra file `commands/lyric.js`.',
+
+              color:
+                'error',
+
+            }),
+
+          ],
+
+        }).catch(() => {});
+
+      }
+
+
+      return true;
 
     }
 
@@ -697,14 +910,21 @@ async function handlePrefixCommand(
 
     const restriction =
       getPrefixRestriction(
+
         command,
+
         args,
+
         resolveSubcommandAlias
+
       );
 
 
     if (
-      !supportsPrefixExecution(command) ||
+      !supportsPrefixExecution(
+        command
+      )
+      ||
       restriction.blocked
     ) {
 
@@ -739,7 +959,7 @@ async function handlePrefixCommand(
       }
 
 
-      return;
+      return true;
 
     }
 
@@ -791,7 +1011,7 @@ async function handlePrefixCommand(
         .catch(() => {});
 
 
-      return;
+      return true;
 
     }
 
@@ -846,13 +1066,13 @@ async function handlePrefixCommand(
         .catch(() => {});
 
 
-      return;
+      return true;
 
     }
 
 
     /* =====================================================
-       EXECUTE
+       EXECUTE COMMAND
     ===================================================== */
 
     await executePrefixCommand(
@@ -872,12 +1092,27 @@ async function handlePrefixCommand(
     );
 
 
-  } catch (err) {
+    logger.info(
+      `[PREFIX] ${message.author.tag} used ${prefix}${resolvedName}`
+    );
+
+
+    return true;
+
+
+  } catch (error) {
 
     logger.error(
       'Prefix Command Error:',
-      err
+      error
     );
+
+    /*
+     * Đây vẫn là prefix command.
+     * Không để FAQ responder xử lý lại.
+     */
+
+    return true;
 
   }
 
@@ -916,7 +1151,9 @@ async function handleLeveling(
 
 
     if (!allowed) {
+
       return;
+
     }
 
 
@@ -1009,8 +1246,7 @@ async function handleLeveling(
 
 
     const last =
-      userData?.lastMessage ||
-      0;
+      userData?.lastMessage || 0;
 
 
     const cooldown =
@@ -1086,11 +1322,12 @@ async function handleLeveling(
 
     }
 
-  } catch (err) {
+
+  } catch (error) {
 
     logger.error(
       'Leveling Error:',
-      err
+      error
     );
 
   }
