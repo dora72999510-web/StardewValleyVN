@@ -422,7 +422,7 @@ async function handleProtectedChannels(
           )
 
           .setDescription(
-            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+            `<:emoji_134:1523413261574471701> Tài khoản ${member} đã bị hạn chế 1 ngày ` +
             `do gửi nội dung vào <#1521007503263928341>.`
           );
 
