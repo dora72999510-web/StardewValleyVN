@@ -397,7 +397,8 @@ async function handleProtectedChannels(
     /* =====================================================
        LOG CHANNEL
        -----------------------------------------------------
-       Gửi embed vào channel log.
+       Quay lại bản cũ:
+       Gửi text thường, không dùng EmbedBuilder.
     ===================================================== */
 
     const logChannel =
@@ -414,26 +415,12 @@ async function handleProtectedChannels(
       logChannel?.isTextBased()
     ) {
 
-      const embed =
-        new EmbedBuilder()
+      await logChannel.send(
 
-          .setColor(
-            0xf1c40f
-          )
+        `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+        `do gửi nội dung vào <#1521007503263928341>`
 
-          .setDescription(
-            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-            `do gửi nội dung vào <#1521007503263928341>`
-          );
-
-
-      await logChannel.send({
-
-        embeds: [
-          embed,
-        ],
-
-      });
+      );
 
     }
 
@@ -998,7 +985,7 @@ async function handlePrefixCommand(
               color:
                 'error',
 
-            }),
+              }),
 
           ],
 
