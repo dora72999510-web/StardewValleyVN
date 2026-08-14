@@ -1,4 +1,8 @@
-import { Events, PermissionsBitField } from 'discord.js';
+import {
+  EmbedBuilder,
+  Events,
+  PermissionsBitField,
+} from 'discord.js';
 import { logger } from '../utils/logger.js';
 
 import {
@@ -409,19 +413,16 @@ async function handleProtectedChannels(message) {
         .catch(() => null);
 
 
-    if (
-      logChannel?.isTextBased()
-    ) {
+    if (logChannel?.isTextBased()) {
 
-      await logChannel.send(
+  const embed = new EmbedBuilder()
+  .setColor(#f1c40f)
+  .setDescription(
+    `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+    `do gửi nội dung vào <#1521007503263928341>.`
+  );
 
-        `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-        `do gửi nội dung vào <#1521007503263928341>`
-
-      );
-
-    }
-
+}
 
     /* =====================================================
        WARNING MESSAGE
