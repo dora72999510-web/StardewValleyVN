@@ -12,7 +12,7 @@ import { logger } from '../utils/logger.js';
 /*
  * Có thể cấu hình bằng:
  *
- * LYRIC_CHANNEL_ID=123456789012345678
+ * LYRIC_CHANNEL_ID=1537723665754357780
  *
  * Nếu không cấu hình:
  * - !lyric vẫn hoạt động ở mọi kênh.
@@ -21,10 +21,10 @@ import { logger } from '../utils/logger.js';
  * "Lyric chưa được cấu hình"
  *
  * Nếu bạn MUỐN bắt buộc chỉ một kênh,
- * hãy đặt LYRIC_CHANNEL_ID trong .env.
+ * hãy đặt LYRIC_CHANNEL_ trong .env.
  */
 
-const LYRIC_CHANNEL_ID = '1537723665754357780'
+const LYRIC_CHANNEL_ = '1537723665754357780'
 
 /*
  * LRCLIB API
@@ -115,7 +115,7 @@ const command = {
 
       /*
        * ---------------------------------------------------
-       * VALIDATE
+       * VALATE
        * ---------------------------------------------------
        */
 
@@ -144,7 +144,7 @@ const command = {
        * CHANNEL
        * ---------------------------------------------------
        *
-       * Nếu có LYRIC_CHANNEL_ID:
+       * Nếu có LYRIC_CHANNEL_:
        * chỉ cho phép tại channel đó.
        *
        * Nếu không có:
