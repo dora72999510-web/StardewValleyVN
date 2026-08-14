@@ -3,6 +3,7 @@ import {
   Events,
   PermissionsBitField,
 } from 'discord.js';
+
 import { logger } from '../utils/logger.js';
 
 import {
@@ -49,14 +50,6 @@ import {
 
 /* =========================================================
    PREFIX COMMANDS
-   ---------------------------------------------------------
-   CHỈ CHO PHÉP:
-
-   !faq
-   !clearuser
-   !lyric
-
-   Mọi prefix command khác sẽ bị bỏ qua.
 ========================================================= */
 
 const ALLOWED_PREFIX_COMMANDS = new Set([
@@ -68,24 +61,21 @@ const ALLOWED_PREFIX_COMMANDS = new Set([
 
 /* =========================================================
    LYRIC CONFIG
-   ---------------------------------------------------------
-   QUAN TRỌNG:
-
-   Thay ID bên dưới bằng ID channel bạn muốn dùng.
-
-   Hiện tại đang dùng:
-   1537723665754357780
 ========================================================= */
 
-const LYRIC_CHANNEL_ID = '1537723665754357780';
+const LYRIC_CHANNEL_ID =
+  '1537723665754357780';
 
 
 /* =========================================================
    XP CONFIG
 ========================================================= */
 
-const XP_RATE_LIMIT_ATTEMPTS = 12;
-const XP_RATE_LIMIT_WINDOW_MS = 10000;
+const XP_RATE_LIMIT_ATTEMPTS =
+  12;
+
+const XP_RATE_LIMIT_WINDOW_MS =
+  10000;
 
 
 /* =========================================================
@@ -120,9 +110,15 @@ const PROTECTED_TIMEOUT =
 ========================================================= */
 
 export default {
-  name: Events.MessageCreate,
 
-  async execute(message, client) {
+  name:
+    Events.MessageCreate,
+
+
+  async execute(
+    message,
+    client
+  ) {
 
     try {
 
@@ -134,9 +130,11 @@ export default {
         return;
       }
 
+
       if (!message.guild) {
         return;
       }
+
 
       if (message.author?.bot) {
         return;
@@ -149,7 +147,9 @@ export default {
 
       try {
 
-        await handleAutoRole(message);
+        await handleAutoRole(
+          message
+        );
 
       } catch (error) {
 
@@ -163,16 +163,15 @@ export default {
 
       /* =====================================================
          PROTECTED CHANNEL
-         -----------------------------------------------------
-         Ưu tiên cao nhất.
       ===================================================== */
 
       if (
-        await handleProtectedChannels(message)
+        await handleProtectedChannels(
+          message
+        )
       ) {
 
         return;
-
       }
 
 
@@ -188,16 +187,11 @@ export default {
       ) {
 
         return;
-
       }
 
 
       /* =====================================================
          PREFIX COMMAND
-         -----------------------------------------------------
-         !faq
-         !clearuser
-         !lyric
       ===================================================== */
 
       const wasPrefixCommand =
@@ -207,12 +201,6 @@ export default {
         );
 
 
-      /*
-       * Nếu đã xử lý prefix command thì dừng.
-       *
-       * Không để FAQ hoặc Leveling xử lý tiếp.
-       */
-
       if (wasPrefixCommand) {
         return;
       }
@@ -220,18 +208,17 @@ export default {
 
       /* =====================================================
          FAQ AUTO RESPONDER
-         -----------------------------------------------------
-         Chỉ xử lý tin nhắn bình thường.
       ===================================================== */
 
       try {
 
         if (
-          await handleFaq(message)
+          await handleFaq(
+            message
+          )
         ) {
 
           return;
-
         }
 
       } catch (error) {
@@ -264,6 +251,7 @@ export default {
     }
 
   },
+
 };
 
 
@@ -271,7 +259,9 @@ export default {
    PROTECTED CHANNELS
 ========================================================= */
 
-async function handleProtectedChannels(message) {
+async function handleProtectedChannels(
+  message
+) {
 
   try {
 
@@ -282,7 +272,6 @@ async function handleProtectedChannels(message) {
     ) {
 
       return false;
-
     }
 
 
@@ -292,8 +281,12 @@ async function handleProtectedChannels(message) {
 
     const member =
       await message.guild.members
-        .fetch(message.author.id)
-        .catch(() => null);
+        .fetch(
+          message.author.id
+        )
+        .catch(
+          () => null
+        );
 
 
     if (!member) {
@@ -329,7 +322,6 @@ async function handleProtectedChannels(message) {
     ) {
 
       return true;
-
     }
 
 
@@ -339,21 +331,25 @@ async function handleProtectedChannels(message) {
 
     await message
       .delete()
-      .catch(() => {});
+      .catch(
+        () => {}
+      );
 
 
     /* =====================================================
        CHECK MODERATABLE
     ===================================================== */
 
-    if (!member.moderatable) {
+    if (
+      !member.moderatable
+    ) {
 
       logger.warn(
-        `Cannot timeout ${member.user.tag} (role hierarchy issue)`
+        `Cannot timeout ${member.user.tag} ` +
+        `(role hierarchy issue)`
       );
 
       return true;
-
     }
 
 
@@ -398,11 +394,15 @@ async function handleProtectedChannels(message) {
         ],
 
       })
-      .catch(() => {});
+      .catch(
+        () => {}
+      );
 
 
     /* =====================================================
        LOG CHANNEL
+       -----------------------------------------------------
+       Gửi embed vào channel log.
     ===================================================== */
 
     const logChannel =
@@ -410,19 +410,38 @@ async function handleProtectedChannels(message) {
         .fetch(
           '1510871300132835368'
         )
-        .catch(() => null);
+        .catch(
+          () => null
+        );
 
 
-    if (logChannel?.isTextBased()) {
+    if (
+      logChannel?.isTextBased()
+    ) {
 
-  const embed = new EmbedBuilder()
-  .setColor(#f1c40f)
-  .setDescription(
-    `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-    `do gửi nội dung vào <#1521007503263928341>.`
-  );
+      const embed =
+        new EmbedBuilder()
 
-}
+          .setColor(
+            0xf1c40f
+          )
+
+          .setDescription(
+            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+            `do gửi nội dung vào <#1521007503263928341>.`
+          );
+
+
+      await logChannel.send({
+
+        embeds: [
+          embed,
+        ],
+
+      });
+
+    }
+
 
     /* =====================================================
        WARNING MESSAGE
@@ -438,7 +457,9 @@ async function handleProtectedChannels(message) {
       () =>
         warn
           .delete()
-          .catch(() => {}),
+          .catch(
+            () => {}
+          ),
       5000
     );
 
@@ -452,6 +473,7 @@ async function handleProtectedChannels(message) {
       'Protected Channel Error:',
       error
     );
+
 
     return true;
 
@@ -486,7 +508,6 @@ async function handleCountingGame(
     ) {
 
       return false;
-
     }
 
 
@@ -516,7 +537,9 @@ async function handleCountingGame(
 
       await message
         .delete()
-        .catch(() => {});
+        .catch(
+          () => {}
+        );
 
 
       await saveCountingGameConfig(
@@ -556,7 +579,9 @@ async function handleCountingGame(
         () =>
           msg
             .delete()
-            .catch(() => {}),
+            .catch(
+              () => {}
+            ),
         10000
       );
 
@@ -591,6 +616,7 @@ async function handleCountingGame(
       error
     );
 
+
     return false;
 
   }
@@ -600,11 +626,6 @@ async function handleCountingGame(
 
 /* =========================================================
    PREFIX COMMANDS
-   ---------------------------------------------------------
-   RETURN:
-
-   true  = đã xử lý prefix command
-   false = không phải prefix command
 ========================================================= */
 
 async function handlePrefixCommand(
@@ -646,10 +667,6 @@ async function handlePrefixCommand(
       );
 
 
-    /*
-     * Không phải prefix command.
-     */
-
     if (!parsed) {
       return false;
     }
@@ -673,12 +690,6 @@ async function handlePrefixCommand(
 
     /* =====================================================
        HARD WHITELIST
-       -----------------------------------------------------
-       CHỈ CHO:
-
-       !faq
-       !clearuser
-       !lyric
     ===================================================== */
 
     if (
@@ -687,37 +698,18 @@ async function handlePrefixCommand(
       )
     ) {
 
-      /*
-       * Không báo lỗi.
-       * Không chạy command.
-       */
-
       return true;
-
     }
 
 
     /* =====================================================
        LYRIC CHANNEL
-       -----------------------------------------------------
-       !lyric chỉ được chạy trong channel chỉ định.
     ===================================================== */
 
     if (
-      normalizedCommandName === 'lyric'
+      normalizedCommandName ===
+      'lyric'
     ) {
-
-      /*
-       * Không còn kiểm tra:
-       *
-       * process.env.LYRIC_CHANNEL_ID
-       *
-       * Không còn báo:
-       *
-       * "Lyric chưa được cấu hình"
-       *
-       * ID được cố định trực tiếp ở đầu file.
-       */
 
       if (
         message.channel.id !==
@@ -745,11 +737,12 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(() => {});
+          .catch(
+            () => {}
+          );
 
 
         return true;
-
       }
 
     }
@@ -782,11 +775,13 @@ async function handlePrefixCommand(
     ) {
 
       logger.warn(
-        `[PREFIX] Blocked alias: ${normalizedCommandName} -> ${normalizedResolvedName}`
+        `[PREFIX] Blocked alias: ` +
+        `${normalizedCommandName} -> ` +
+        `${normalizedResolvedName}`
       );
 
-      return true;
 
+      return true;
     }
 
 
@@ -803,7 +798,8 @@ async function handlePrefixCommand(
     if (!command) {
 
       logger.warn(
-        `[PREFIX] Command "${resolvedName}" chưa được load vào client.commands.`
+        `[PREFIX] Command "${resolvedName}" ` +
+        `chưa được load vào client.commands.`
       );
 
 
@@ -836,13 +832,14 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(() => {});
+          .catch(
+            () => {}
+          );
 
       }
 
 
       return true;
-
     }
 
 
@@ -900,13 +897,14 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(() => {});
+          .catch(
+            () => {}
+          );
 
       }
 
 
       return true;
-
     }
 
 
@@ -954,11 +952,12 @@ async function handlePrefixCommand(
           ],
 
         })
-        .catch(() => {});
+        .catch(
+          () => {}
+        );
 
 
       return true;
-
     }
 
 
@@ -1009,11 +1008,12 @@ async function handlePrefixCommand(
           ],
 
         })
-        .catch(() => {});
+        .catch(
+          () => {}
+        );
 
 
       return true;
-
     }
 
 
@@ -1039,7 +1039,8 @@ async function handlePrefixCommand(
 
 
     logger.info(
-      `[PREFIX] ${message.author.tag} used ${prefix}${resolvedName}`
+      `[PREFIX] ${message.author.tag} ` +
+      `used ${prefix}${resolvedName}`
     );
 
 
@@ -1053,11 +1054,6 @@ async function handlePrefixCommand(
       error
     );
 
-
-    /*
-     * Nếu đã nhận diện là prefix command,
-     * không cho FAQ responder xử lý lại.
-     */
 
     return true;
 
@@ -1078,7 +1074,8 @@ async function handleLeveling(
   try {
 
     const key =
-      `xp:${message.guild.id}:${message.author.id}`;
+      `xp:${message.guild.id}:` +
+      `${message.author.id}`;
 
 
     /* =====================================================
@@ -1118,7 +1115,6 @@ async function handleLeveling(
     ) {
 
       return;
-
     }
 
 
@@ -1133,7 +1129,6 @@ async function handleLeveling(
     ) {
 
       return;
-
     }
 
 
@@ -1148,7 +1143,6 @@ async function handleLeveling(
     ) {
 
       return;
-
     }
 
 
@@ -1170,7 +1164,6 @@ async function handleLeveling(
     ) {
 
       return;
-
     }
 
 
@@ -1208,7 +1201,6 @@ async function handleLeveling(
     ) {
 
       return;
-
     }
 
 
