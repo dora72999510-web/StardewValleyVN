@@ -1,6 +1,9 @@
 import { readdir } from 'fs/promises';
 import { join } from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
+import {
+  fileURLToPath,
+  pathToFileURL,
+} from 'url';
 import { dirname } from 'path';
 
 import { logger } from '../utils/logger.js';
@@ -11,10 +14,10 @@ import { logger } from '../utils/logger.js';
 ========================================================= */
 
 const __filename =
-    fileURLToPath(import.meta.url);
+  fileURLToPath(import.meta.url);
 
 const __dirname =
-    dirname(__filename);
+  dirname(__filename);
 
 
 /* =========================================================
@@ -23,269 +26,316 @@ const __dirname =
 
 export default async function loadEvents(client) {
 
-    if (!client) {
-        throw new Error(
-            'loadEvents(): Discord client is not available.'
-        );
-    }
+  if (!client) {
+    throw new Error(
+      'loadEvents(): Discord client is not available.'
+    );
+  }
 
 
-    const eventsPath =
-        join(
-            __dirname,
-            '../events'
-        );
+  const eventsPath =
+    join(
+      __dirname,
+      '../events'
+    );
 
 
-    let entries;
+  /* =======================================================
+     READ EVENTS DIRECTORY
+  ======================================================= */
+
+  let entries;
+
+  try {
+
+    entries =
+      await readdir(
+        eventsPath,
+        {
+          withFileTypes: true,
+        }
+      );
+
+  } catch (error) {
+
+    logger.error(
+      '❌ Cannot read events directory:',
+      error
+    );
+
+    throw error;
+  }
+
+
+  /* =======================================================
+     FIND EVENT FILES
+  ======================================================= */
+
+  const eventFiles =
+    entries
+      .filter(
+        entry =>
+          entry.isFile() &&
+          entry.name.endsWith('.js') &&
+          !entry.name.startsWith('_')
+      )
+      .map(
+        entry =>
+          entry.name
+      )
+      .sort();
+
+
+  logger.info(
+    `📂 Found ${eventFiles.length} event file(s).`
+  );
+
+
+  let loadedCount = 0;
+
+
+  /* =======================================================
+     LOAD EACH EVENT
+  ======================================================= */
+
+  for (
+    const file
+    of eventFiles
+  ) {
+
+    const filePath =
+      join(
+        eventsPath,
+        file
+      );
+
 
     try {
 
-        entries =
-            await readdir(
-                eventsPath,
-                {
-                    withFileTypes: true
-                }
+      const moduleUrl =
+        pathToFileURL(
+          filePath
+        ).href;
+
+
+      const module =
+        await import(
+          moduleUrl
+        );
+
+
+      const event =
+        module.default;
+
+
+      /* =====================================================
+         VALIDATE
+      ===================================================== */
+
+      if (
+        !event ||
+        typeof event !== 'object'
+      ) {
+
+        logger.warn(
+          `⚠️ Skipping ${file}: default export is not an object.`
+        );
+
+        continue;
+      }
+
+
+      if (
+        typeof event.name !== 'string' ||
+        !event.name.trim()
+      ) {
+
+        logger.warn(
+          `⚠️ Skipping ${file}: missing event name.`
+        );
+
+        continue;
+      }
+
+
+      if (
+        typeof event.execute !== 'function'
+      ) {
+
+        logger.warn(
+          `⚠️ Skipping ${file}: missing execute().`
+        );
+
+        continue;
+      }
+
+
+      const eventName =
+        event.name.trim();
+
+
+      /* =====================================================
+         DUPLICATE PROTECTION
+      ===================================================== */
+
+      /*
+       * Không đăng ký cùng một event listener
+       * nhiều lần nếu loader bị gọi lại.
+       */
+
+      if (
+        client.listenerCount(
+          eventName
+        ) > 0
+      ) {
+
+        logger.warn(
+          `⚠️ Event "${eventName}" already has ` +
+          `${client.listenerCount(eventName)} listener(s). ` +
+          `Registering ${file} anyway.`
+        );
+
+      }
+
+
+      /* =====================================================
+         EVENT WRAPPER
+      ===================================================== */
+
+      const safeExecute =
+        async (...args) => {
+
+          try {
+
+            /*
+             * Discord event:
+             *
+             * messageCreate:
+             *   execute(message, client)
+             *
+             * ready:
+             *   execute(client)
+             *
+             * Vì loader truyền client cuối cùng,
+             * event file phải nhận client ở cuối.
+             */
+
+            await event.execute(
+              ...args,
+              client
             );
+
+          } catch (error) {
+
+            logger.error(
+              `❌ Error executing event "${eventName}" (${file}):`,
+              error
+            );
+
+          }
+
+        };
+
+
+      /* =====================================================
+         REGISTER
+      ===================================================== */
+
+      if (event.once === true) {
+
+        client.once(
+          eventName,
+          safeExecute
+        );
+
+
+        logger.info(
+          `✅ Registered once event: ${eventName} (${file})`
+        );
+
+      } else {
+
+        client.on(
+          eventName,
+          safeExecute
+        );
+
+
+        logger.info(
+          `✅ Registered event: ${eventName} (${file})`
+        );
+
+      }
+
+
+      loadedCount++;
+
 
     } catch (error) {
 
-        logger.error(
-            '❌ Cannot read events directory:',
-            error
-        );
-
-        throw error;
-    }
-
-
-    /*
-     * Chỉ lấy file JS trực tiếp trong /events
-     *
-     * Không lấy thư mục con.
-     */
-
-    const eventFiles =
-        entries
-            .filter(
-                entry =>
-                    entry.isFile() &&
-                    entry.name.endsWith('.js') &&
-                    !entry.name.startsWith('_')
-            )
-            .map(
-                entry =>
-                    entry.name
-            );
-
-
-    logger.info(
-        `Found ${eventFiles.length} event files to load`
-    );
-
-
-    let loadedCount = 0;
-
-
-    /* =====================================================
-       LOAD EACH EVENT
-    ===================================================== */
-
-    for (
-        const file
-        of eventFiles
-    ) {
-
-        const filePath =
-            join(
-                eventsPath,
-                file
-            );
-
-
-        try {
-
-            const moduleUrl =
-                pathToFileURL(
-                    filePath
-                ).href;
-
-
-            const module =
-                await import(
-                    moduleUrl
-                );
-
-
-            const event =
-                module.default;
-
-
-            /* =================================================
-               VALIDATE EVENT
-            ================================================= */
-
-            if (
-                !event ||
-                typeof event !== 'object'
-            ) {
-
-                logger.debug(
-                    `Skipping ${file}: default export is not an event object.`
-                );
-
-                continue;
-            }
-
-
-            if (
-                !event.name
-            ) {
-
-                logger.debug(
-                    `Skipping ${file}: no event name.`
-                );
-
-                continue;
-            }
-
-
-            if (
-                typeof event.execute !==
-                'function'
-            ) {
-
-                logger.debug(
-                    `Skipping ${file}: no execute() function.`
-                );
-
-                continue;
-            }
-
-
-            /* =================================================
-               PROTECT AGAINST DUPLICATE EVENT LISTENERS
-            ================================================= */
-
-            const eventName =
-                event.name;
-
-
-            /*
-             * Wrapper này luôn truyền client vào cuối.
-             *
-             * Ví dụ MessageCreate:
-             *
-             * Discord:
-             *   message
-             *
-             * Event:
-             *   execute(message, client)
-             */
-
-            const safeExecute =
-                async (...args) => {
-
-                    try {
-
-                        await event.execute(
-                            ...args,
-                            client
-                        );
-
-                    } catch (error) {
-
-                        logger.error(
-                            `❌ Error executing event ${eventName} (${file}):`,
-                            error
-                        );
-
-                    }
-
-                };
-
-
-            /* =================================================
-               REGISTER EVENT
-            ================================================= */
-
-            if (event.once) {
-
-                client.once(
-                    eventName,
-                    safeExecute
-                );
-
-
-                logger.info(
-                    `✅ Registered once event: ${eventName} (${file})`
-                );
-
-            } else {
-
-                client.on(
-                    eventName,
-                    safeExecute
-                );
-
-
-                logger.info(
-                    `✅ Registered event: ${eventName} (${file})`
-                );
-
-            }
-
-
-            loadedCount++;
-
-
-        } catch (error) {
-
-            logger.error(
-                `❌ Error loading event ${file}:`,
-                error
-            );
-
-        }
+      logger.error(
+        `❌ Failed to load event "${file}":`,
+        error
+      );
 
     }
 
+  }
 
-    /* =====================================================
-       SUMMARY
-    ===================================================== */
 
-    logger.info(
-        `✅ Successfully registered ${loadedCount} event(s).`
+  /* =======================================================
+     SUMMARY
+  ======================================================= */
+
+  logger.info(
+    `✅ Successfully registered ${loadedCount}/${eventFiles.length} event(s).`
+  );
+
+
+  /* =======================================================
+     MESSAGE CREATE CHECK
+  ======================================================= */
+
+  const messageCreateListeners =
+    client.listenerCount(
+      'messageCreate'
     );
 
 
-    /*
-     * DEBUG QUAN TRỌNG:
-     *
-     * Kiểm tra MessageCreate đã thực sự được đăng ký chưa.
-     */
-
-    const messageCreateListeners =
-        client.listenerCount(
-            'messageCreate'
-        );
+  logger.info(
+    `📨 messageCreate listeners: ${messageCreateListeners}`
+  );
 
 
-    logger.info(
-        `📨 MessageCreate listeners: ${messageCreateListeners}`
+  if (
+    messageCreateListeners === 0
+  ) {
+
+    logger.error(
+      '❌ CRITICAL: No messageCreate listener is registered.'
     );
 
+    logger.error(
+      '❌ Prefix commands such as !lyric will NOT work.'
+    );
 
-    if (
-        messageCreateListeners === 0
-    ) {
+  } else {
 
-        logger.warn(
-            '⚠️ WARNING: No messageCreate listener is registered!'
-        );
+    logger.info(
+      '✅ messageCreate listener is active. Prefix commands can be processed.'
+    );
 
-    }
+  }
+
+
+  return {
+    loaded:
+      loadedCount,
+
+    total:
+      eventFiles.length,
+
+    messageCreateListeners,
+  };
 
 }
