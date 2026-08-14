@@ -466,7 +466,7 @@ class TitanBot extends Client {
          */
 
         name:
-          'nha phat trien',
+          'nha-phat-trien',
 
         /*
          * Đây là phần mô tả hiển thị bên dưới command.
