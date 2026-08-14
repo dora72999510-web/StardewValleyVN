@@ -5,58 +5,40 @@ import {
 
 import { logger } from '../utils/logger.js';
 
+
 /* =========================================================
    CONFIG
 ========================================================= */
 
 /*
- * Kênh sử dụng !lyric
- *
- * .env:
- *
- * LYRIC_CHANNEL_ID=123456789012345678
- *
- * Nếu để trống:
- *
- * LYRIC_CHANNEL_ID=
- *
- * thì !lyric được phép dùng ở mọi kênh.
+ * Kênh duy nhất được phép dùng !lyric
  */
-
 const LYRIC_CHANNEL_ID =
-  String(
-    process.env.LYRIC_CHANNEL_ID || ''
-  ).trim();
+  '1537723665754357780';
 
 
 /*
  * LRCLIB API
  */
-
 const LYRICS_API_URL =
   'https://lrclib.net/api/search';
 
 
 /*
- * API timeout.
+ * API timeout
  */
-
 const API_TIMEOUT_MS = 10000;
 
 
 /*
  * Discord Embed description tối đa 4096 ký tự.
- *
- * Dùng 3800 để có khoảng an toàn.
  */
-
 const MAX_LYRICS_LENGTH = 3800;
 
 
 /*
- * Không gửi quá nhiều trang.
+ * Số trang lyrics tối đa.
  */
-
 const MAX_LYRICS_PAGES = 10;
 
 
@@ -66,50 +48,28 @@ const MAX_LYRICS_PAGES = 10;
 
 const command = {
 
-  /*
-   * Tên command.
-   *
-   * Prefix:
-   *
-   * !lyric Shape of You
-   *
-   * Slash:
-   *
-   * /lyric
-   */
-
   name: 'lyric',
 
   category: 'music',
 
-  description:
-    'Tìm lời bài hát',
-
+  description: 'Tìm lời bài hát',
 
   /*
-   * Cho phép messageAdapter chạy
-   * command bằng prefix.
+   * Rất quan trọng.
+   *
+   * messageAdapter.js kiểm tra prefix === false
+   * mới chặn command.
    */
-
   prefix: true,
 
 
   /*
-   * Slash command.
-   *
-   * messageAdapter.js của bạn lấy:
-   *
-   * interaction.options.getString('song')
-   *
-   * nên option bắt buộc phải tên là "song".
+   * Slash command vẫn được giữ lại.
    */
-
   data:
     new SlashCommandBuilder()
       .setName('lyric')
-      .setDescription(
-        'Tìm lời bài hát'
-      )
+      .setDescription('Tìm lời bài hát')
       .addStringOption(
         option =>
           option
@@ -122,53 +82,50 @@ const command = {
 
 
   /* =======================================================
-     EXECUTE
-     -------------------------------------------------------
-     QUAN TRỌNG:
-     -------------------------------------------------------
-     messageAdapter.js hiện tại gọi:
+     EXECUTE PREFIX
+     =======================================================
 
-       command.execute(
-         mockInteraction,
-         guildConfig,
+     messageAdapter.js của bạn gọi:
+
+       execute(
+         message,
+         normalizedArgs,
          client
        );
 
-     Vì vậy KHÔNG dùng:
+     Vì vậy:
 
-       execute(message, args, client)
-
-     mà phải dùng:
-
-       execute(interaction, guildConfig, client)
+       message = Discord Message
+       args    = ['Ed', 'Sheeran', 'Shape', 'of', 'You']
+       client  = Discord Client
   ======================================================= */
 
   async execute(
-    interaction,
-    guildConfig,
+    message,
+    args,
     client
   ) {
 
     try {
 
       /* =====================================================
-         VALIDATE INTERACTION
+         VALIDATE MESSAGE
       ===================================================== */
 
-      if (!interaction) {
+      if (!message) {
 
         logger.warn(
-          '[LYRIC] Interaction không tồn tại.'
+          '[LYRIC] Message không tồn tại.'
         );
 
         return;
       }
 
 
-      if (!interaction.channel) {
+      if (!message.channel) {
 
         logger.warn(
-          '[LYRIC] Interaction không có channel.'
+          '[LYRIC] Message không có channel.'
         );
 
         return;
@@ -176,27 +133,22 @@ const command = {
 
 
       /* =====================================================
-         CHANNEL RESTRICTION
+         CHANNEL CHECK
       ===================================================== */
 
       /*
-       * Nếu đã cấu hình LYRIC_CHANNEL_ID:
+       * Chỉ cho phép !lyric ở:
        *
-       * !lyric chỉ được chạy trong channel đó.
-       *
-       * Nếu không cấu hình:
-       *
-       * cho phép mọi channel.
+       * 1537723665754357780
        */
 
       if (
-        LYRIC_CHANNEL_ID &&
-        interaction.channel.id !==
-          LYRIC_CHANNEL_ID
+        String(message.channel.id) !==
+        LYRIC_CHANNEL_ID
       ) {
 
         await sendEmbed(
-          interaction,
+          message,
           {
             title:
               '🎵 Sai kênh sử dụng',
@@ -218,29 +170,29 @@ const command = {
 
 
       /* =====================================================
-         GET SONG QUERY
+         NORMALIZE QUERY
       ===================================================== */
 
       /*
-       * messageAdapter.js tạo:
-       *
-       * interaction.options.getString('song')
+       * messageAdapter.js đã đảm bảo args là Array.
        *
        * Ví dụ:
        *
        * !lyric Ed Sheeran Shape of You
        *
-       * sẽ trở thành:
+       * args =
        *
-       * interaction.options.getString('song')
-       *
-       * = "Ed Sheeran Shape of You"
+       * [
+       *   'Ed',
+       *   'Sheeran',
+       *   'Shape',
+       *   'of',
+       *   'You'
+       * ]
        */
 
       const query =
-        getSongQuery(
-          interaction
-        );
+        normalizeQuery(args);
 
 
       logger.info(
@@ -255,7 +207,7 @@ const command = {
       if (!query) {
 
         await sendEmbed(
-          interaction,
+          message,
           {
             title:
               '🎵 Cách sử dụng !lyric',
@@ -267,8 +219,7 @@ const command = {
                 '**Ví dụ:**',
                 '`!lyric Shape of You`',
                 '`!lyric Ed Sheeran Shape of You`',
-                '',
-                'Bạn nên nhập cả **tên ca sĩ + tên bài hát** để có kết quả chính xác hơn.',
+                '`!lyric Adele Hello`',
               ].join('\n'),
 
             color:
@@ -285,8 +236,8 @@ const command = {
       ===================================================== */
 
       const loadingMessage =
-        await sendLoadingMessage(
-          interaction,
+        await sendLoading(
+          message,
           query
         );
 
@@ -316,7 +267,7 @@ const command = {
               [
                 `Không tìm thấy lyrics cho **${escapeMarkdown(query)}**.`,
                 '',
-                'Bạn có thể thử nhập cả **tên ca sĩ + tên bài hát**.',
+                'Hãy thử nhập cả tên ca sĩ và tên bài hát.',
                 '',
                 '**Ví dụ:**',
                 '`!lyric Ed Sheeran Shape of You`',
@@ -328,8 +279,8 @@ const command = {
             );
 
 
-        await updateOrSend(
-          interaction,
+        await editOrSend(
+          message,
           loadingMessage,
           embed
         );
@@ -339,7 +290,7 @@ const command = {
 
 
       /* =====================================================
-         EXTRACT LYRICS
+         GET LYRICS
       ===================================================== */
 
       const lyrics =
@@ -359,13 +310,12 @@ const command = {
               [
                 `Đã tìm thấy **${escapeMarkdown(
                   result.trackName ||
-                    query
+                  query
                 )}**.`,
                 '',
-                'Nhưng API không trả về phần lời bài hát.',
+                'Nhưng LRCLIB không trả về phần lời bài hát.',
                 '',
-                'Bạn có thể thử nhập lại với cả tên ca sĩ:',
-                '`!lyric Tên ca sĩ Tên bài hát`',
+                'Hãy thử tìm bằng tên ca sĩ + tên bài hát.',
               ].join('\n')
             )
             .setColor(
@@ -373,8 +323,8 @@ const command = {
             );
 
 
-        await updateOrSend(
-          interaction,
+        await editOrSend(
+          message,
           loadingMessage,
           embed
         );
@@ -384,7 +334,7 @@ const command = {
 
 
       /* =====================================================
-         SPLIT LYRICS
+         SPLIT
       ===================================================== */
 
       let chunks =
@@ -402,15 +352,15 @@ const command = {
               '❌ Lyrics rỗng'
             )
             .setDescription(
-              'API trả về dữ liệu nhưng không có nội dung lyrics để hiển thị.'
+              'Không có nội dung lyrics để hiển thị.'
             )
             .setColor(
               0xed4245
             );
 
 
-        await updateOrSend(
-          interaction,
+        await editOrSend(
+          message,
           loadingMessage,
           embed
         );
@@ -419,9 +369,9 @@ const command = {
       }
 
 
-      /*
-       * Giới hạn số trang.
-       */
+      /* =====================================================
+         LIMIT PAGES
+      ===================================================== */
 
       if (
         chunks.length >
@@ -429,7 +379,7 @@ const command = {
       ) {
 
         logger.warn(
-          `[LYRIC] Lyrics quá dài: ${chunks.length} pages. Chỉ gửi ${MAX_LYRICS_PAGES} pages.`
+          `[LYRIC] Lyrics quá dài: ${chunks.length} pages`
         );
 
         chunks =
@@ -453,8 +403,8 @@ const command = {
         );
 
 
-      await updateOrSend(
-        interaction,
+      await editOrSend(
+        message,
         loadingMessage,
         firstEmbed
       );
@@ -479,19 +429,31 @@ const command = {
           );
 
 
-        await sendFollowup(
-          interaction,
-          embed
-        );
+        await message.channel
+          .send({
+            embeds: [
+              embed,
+            ],
+          })
+          .catch(
+            error => {
+
+              logger.warn(
+                `[LYRIC] Không thể gửi page ${index + 1}:`,
+                error?.message ||
+                error
+              );
+            }
+          );
       }
 
 
       /* =====================================================
-         SUCCESS LOG
+         SUCCESS
       ===================================================== */
 
       logger.info(
-        `[LYRIC] Successfully returned "${result.trackName || query}" for ${getUserLabel(interaction)}`
+        `[LYRIC] Successfully returned "${result.trackName || query}"`
       );
 
     } catch (error) {
@@ -504,23 +466,18 @@ const command = {
 
       try {
 
-        const embed =
-          new EmbedBuilder()
-            .setTitle(
-              '❌ Lỗi lyrics'
-            )
-            .setDescription(
-              'Đã xảy ra lỗi khi tìm lời bài hát. Vui lòng thử lại sau.'
-            )
-            .setColor(
-              0xed4245
-            );
+        await sendEmbed(
+          message,
+          {
+            title:
+              '❌ Lỗi lyrics',
 
+            description:
+              'Đã xảy ra lỗi khi tìm lời bài hát. Vui lòng thử lại sau.',
 
-        await updateOrSend(
-          interaction,
-          null,
-          embed
+            color:
+              0xed4245,
+          }
         );
 
       } catch (sendError) {
@@ -536,118 +493,94 @@ const command = {
 
 
 /* =========================================================
-   GET SONG QUERY
+   NORMALIZE QUERY
 ========================================================= */
 
-function getSongQuery(
-  interaction
-) {
+function normalizeQuery(args) {
 
-  try {
+  /*
+   * messageAdapter.js hiện tại đã truyền Array.
+   */
 
-    /*
-     * Đây là cách chính.
-     *
-     * messageAdapter.js của bạn
-     * đã tạo option "song".
-     */
+  if (
+    Array.isArray(args)
+  ) {
 
-    if (
-      interaction?.options &&
-      typeof interaction.options.getString ===
-        'function'
+    return args
+      .map(
+        value =>
+          normalizeArgument(value)
+      )
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+
+
+  /*
+   * Fallback nếu command được gọi
+   * trực tiếp bằng String.
+   */
+
+  if (
+    typeof args === 'string'
+  ) {
+
+    return args.trim();
+  }
+
+
+  /*
+   * Fallback object để tránh
+   * [object Object].
+   */
+
+  if (
+    args &&
+    typeof args === 'object'
+  ) {
+
+    const keys = [
+      'query',
+      'song',
+      'songName',
+      'title',
+      'text',
+      'content',
+      'input',
+      'value',
+    ];
+
+
+    for (
+      const key of keys
     ) {
 
-      const value =
-        interaction.options.getString(
-          'song'
-        );
-
-
       if (
-        typeof value ===
-          'string' &&
-        value.trim()
+        typeof args[key] === 'string' &&
+        args[key].trim()
       ) {
 
-        return value.trim();
+        return args[key].trim();
       }
     }
 
 
-    /*
-     * Fallback:
-     *
-     * Một số trường hợp adapter có thể
-     * truyền _hoistedOptions.
-     */
-
     if (
-      Array.isArray(
-        interaction?.options?._hoistedOptions
-      )
+      Array.isArray(args.args)
     ) {
 
-      const option =
-        interaction.options._hoistedOptions.find(
-          item =>
-            item?.name === 'song'
-        );
-
-
-      if (
-        typeof option?.value ===
-          'string' &&
-        option.value.trim()
-      ) {
-
-        return option.value.trim();
-      }
+      return normalizeQuery(
+        args.args
+      );
     }
 
-
-    /*
-     * Fallback cuối cùng:
-     *
-     * args nếu adapter cũ còn sử dụng.
-     */
-
-    if (
-      typeof interaction?.args ===
-        'string'
-    ) {
-
-      return interaction.args.trim();
-    }
-
-
-    if (
-      Array.isArray(
-        interaction?.args
-      )
-    ) {
-
-      return interaction.args
-        .map(
-          normalizeArgument
-        )
-        .filter(Boolean)
-        .join(' ')
-        .trim();
-    }
-
-
-    return '';
-
-  } catch (error) {
-
-    logger.error(
-      '[LYRIC] Error getting song query:',
-      error
-    );
 
     return '';
   }
+
+
+  return '';
 }
 
 
@@ -655,13 +588,11 @@ function getSongQuery(
    NORMALIZE ARGUMENT
 ========================================================= */
 
-function normalizeArgument(
-  value
-) {
+function normalizeArgument(value) {
 
   if (
-    value === null ||
-    value === undefined
+    value === undefined ||
+    value === null
   ) {
 
     return '';
@@ -669,8 +600,7 @@ function normalizeArgument(
 
 
   if (
-    typeof value ===
-      'string'
+    typeof value === 'string'
   ) {
 
     return value.trim();
@@ -686,40 +616,28 @@ function normalizeArgument(
   }
 
 
-  /*
-   * Tuyệt đối không:
-   *
-   * String(value)
-   *
-   * nếu value là object.
-   *
-   * Vì sẽ tạo:
-   *
-   * [object Object]
-   */
-
   if (
-    typeof value ===
-      'object'
+    typeof value === 'object'
   ) {
 
-    const possibleKeys = [
+    const keys = [
       'value',
       'name',
       'text',
       'content',
       'query',
+      'input',
+      'song',
+      'title',
     ];
 
 
     for (
-      const key
-      of possibleKeys
+      const key of keys
     ) {
 
       if (
-        typeof value[key] ===
-          'string' &&
+        typeof value[key] === 'string' &&
         value[key].trim()
       ) {
 
@@ -740,13 +658,10 @@ function normalizeArgument(
    SEARCH LRCLIB
 ========================================================= */
 
-async function searchLyrics(
-  query
-) {
+async function searchLyrics(query) {
 
   if (
-    typeof query !==
-      'string' ||
+    typeof query !== 'string' ||
     !query.trim()
   ) {
 
@@ -826,17 +741,13 @@ async function searchLyrics(
 
 
     /*
-     * Ưu tiên:
-     *
-     * 1. plainLyrics
-     * 2. syncedLyrics
+     * Ưu tiên kết quả có plainLyrics.
      */
 
     const plainResult =
       data.find(
         item =>
-          typeof item?.plainLyrics ===
-            'string' &&
+          typeof item?.plainLyrics === 'string' &&
           item.plainLyrics.trim()
       );
 
@@ -847,11 +758,14 @@ async function searchLyrics(
     }
 
 
+    /*
+     * Fallback syncedLyrics.
+     */
+
     const syncedResult =
       data.find(
         item =>
-          typeof item?.syncedLyrics ===
-            'string' &&
+          typeof item?.syncedLyrics === 'string' &&
           item.syncedLyrics.trim()
       );
 
@@ -867,8 +781,7 @@ async function searchLyrics(
   } catch (error) {
 
     if (
-      error?.name ===
-        'AbortError'
+      error?.name === 'AbortError'
     ) {
 
       logger.warn(
@@ -899,9 +812,7 @@ async function searchLyrics(
    GET LYRICS TEXT
 ========================================================= */
 
-function getLyricsText(
-  result
-) {
+function getLyricsText(result) {
 
   if (!result) {
 
@@ -909,13 +820,8 @@ function getLyricsText(
   }
 
 
-  /*
-   * Plain lyrics.
-   */
-
   if (
-    typeof result.plainLyrics ===
-      'string' &&
+    typeof result.plainLyrics === 'string' &&
     result.plainLyrics.trim()
   ) {
 
@@ -925,13 +831,8 @@ function getLyricsText(
   }
 
 
-  /*
-   * Synced lyrics.
-   */
-
   if (
-    typeof result.syncedLyrics ===
-      'string' &&
+    typeof result.syncedLyrics === 'string' &&
     result.syncedLyrics.trim()
   ) {
 
@@ -946,12 +847,10 @@ function getLyricsText(
 
 
 /* =========================================================
-   CLEAN PLAIN LYRICS
+   CLEAN LYRICS
 ========================================================= */
 
-function cleanLyrics(
-  text
-) {
+function cleanLyrics(text) {
 
   return String(
     text || ''
@@ -976,9 +875,7 @@ function cleanLyrics(
    CLEAN SYNCED LYRICS
 ========================================================= */
 
-function cleanSyncedLyrics(
-  text
-) {
+function cleanSyncedLyrics(text) {
 
   return String(
     text || ''
@@ -987,11 +884,6 @@ function cleanSyncedLyrics(
     .map(
       line =>
         line
-          /*
-           * [00:12.34]
-           * [01:02.123]
-           */
-
           .replace(
             /^\s*\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*/,
             ''
@@ -1009,7 +901,7 @@ function cleanSyncedLyrics(
 
 
 /* =========================================================
-   CREATE LYRICS EMBED
+   CREATE EMBED
 ========================================================= */
 
 function createLyricsEmbed(
@@ -1100,84 +992,37 @@ function createLyricsEmbed(
    SEND LOADING
 ========================================================= */
 
-async function sendLoadingMessage(
-  interaction,
+async function sendLoading(
+  message,
   query
 ) {
 
-  const embed =
-    new EmbedBuilder()
-      .setTitle(
-        '🎵 Đang tìm bài hát...'
-      )
-      .setDescription(
-        `Đang tìm **${escapeMarkdown(
-          query
-        )}**...`
-      )
-      .setColor(
-        0x5865f2
-      );
-
-
   try {
 
-    /*
-     * messageAdapter.js tạo interaction
-     * có .channel.send().
-     */
-
-    if (
-      interaction.channel &&
-      typeof interaction.channel.send ===
-        'function'
-    ) {
-
-      return await interaction.channel
-        .send({
-          embeds: [
-            embed,
-          ],
-        });
-    }
-
-
-    /*
-     * Fallback cho Discord Interaction thật.
-     */
-
-    if (
-      typeof interaction.reply ===
-        'function'
-    ) {
-
-      await interaction.reply({
+    return await message.channel
+      .send({
         embeds: [
-          embed,
+          new EmbedBuilder()
+            .setTitle(
+              '🎵 Đang tìm bài hát...'
+            )
+            .setDescription(
+              `Đang tìm **${escapeMarkdown(
+                query
+              )}**...`
+            )
+            .setColor(
+              0x5865f2
+            ),
         ],
       });
-
-
-      if (
-        typeof interaction.fetchReply ===
-          'function'
-      ) {
-
-        return await interaction.fetchReply();
-      }
-
-      return null;
-    }
-
-
-    return null;
 
   } catch (error) {
 
     logger.warn(
-      '[LYRIC] Không thể gửi loading message:',
+      '[LYRIC] Không thể gửi loading:',
       error?.message ||
-        error
+      error
     );
 
     return null;
@@ -1186,24 +1031,23 @@ async function sendLoadingMessage(
 
 
 /* =========================================================
-   UPDATE OR SEND
+   EDIT OR SEND
 ========================================================= */
 
-async function updateOrSend(
-  interaction,
+async function editOrSend(
+  message,
   loadingMessage,
   embed
 ) {
 
   /*
-   * Nếu có loading message:
-   * edit nó.
+   * Có loading message:
+   * sửa message đó.
    */
 
   if (
     loadingMessage &&
-    typeof loadingMessage.edit ===
-      'function'
+    typeof loadingMessage.edit === 'function'
   ) {
 
     const edited =
@@ -1222,7 +1066,7 @@ async function updateOrSend(
             logger.warn(
               '[LYRIC] Không thể edit loading:',
               error?.message ||
-                error
+              error
             );
 
             return false;
@@ -1238,91 +1082,27 @@ async function updateOrSend(
 
 
   /*
-   * Fallback:
+   * Nếu không edit được:
    * gửi message mới.
    */
 
-  return await sendEmbed(
-    interaction,
-    {
-      title:
-        embed.data?.title ||
-        '🎵 Lyric',
-
-      description:
-        embed.data?.description ||
-        '',
-
-      color:
-        embed.data?.color ||
-        0x5865f2,
-    }
-  );
-}
-
-
-/* =========================================================
-   SEND FOLLOWUP
-========================================================= */
-
-async function sendFollowup(
-  interaction,
-  embed
-) {
-
   try {
 
-    /*
-     * Prefix mock interaction:
-     *
-     * interaction.channel.send()
-     */
-
-    if (
-      interaction.channel &&
-      typeof interaction.channel.send ===
-        'function'
-    ) {
-
-      await interaction.channel.send({
+    await message.channel
+      .send({
         embeds: [
           embed,
         ],
       });
 
-      return true;
-    }
-
-
-    /*
-     * Discord Interaction thật:
-     *
-     * interaction.followUp()
-     */
-
-    if (
-      typeof interaction.followUp ===
-        'function'
-    ) {
-
-      await interaction.followUp({
-        embeds: [
-          embed,
-        ],
-      });
-
-      return true;
-    }
-
-
-    return false;
+    return true;
 
   } catch (error) {
 
     logger.warn(
-      '[LYRIC] Không thể gửi lyrics page:',
+      '[LYRIC] Không thể gửi embed:',
       error?.message ||
-        error
+      error
     );
 
     return false;
@@ -1335,7 +1115,7 @@ async function sendFollowup(
 ========================================================= */
 
 async function sendEmbed(
-  interaction,
+  message,
   {
     title,
     description,
@@ -1343,72 +1123,38 @@ async function sendEmbed(
   }
 ) {
 
-  if (!interaction) {
+  if (
+    !message?.channel
+  ) {
 
     return null;
   }
 
 
-  const embed =
-    new EmbedBuilder()
-      .setTitle(
-        title
-      )
-      .setDescription(
-        description
-      )
-      .setColor(
-        color
-      );
-
-
   try {
 
-    /*
-     * Prefix mock interaction.
-     */
-
-    if (
-      interaction.channel &&
-      typeof interaction.channel.send ===
-        'function'
-    ) {
-
-      return await interaction.channel
-        .send({
-          embeds: [
-            embed,
-          ],
-        });
-    }
-
-
-    /*
-     * Slash interaction.
-     */
-
-    if (
-      typeof interaction.reply ===
-        'function'
-    ) {
-
-      return await interaction.reply({
+    return await message.channel
+      .send({
         embeds: [
-          embed,
+          new EmbedBuilder()
+            .setTitle(
+              title
+            )
+            .setDescription(
+              description
+            )
+            .setColor(
+              color
+            ),
         ],
-        ephemeral: true,
       });
-    }
-
-
-    return null;
 
   } catch (error) {
 
     logger.warn(
       '[LYRIC] Không thể gửi embed:',
       error?.message ||
-        error
+      error
     );
 
     return null;
@@ -1461,7 +1207,7 @@ function splitText(
   ) {
 
     /*
-     * Ưu tiên cắt tại newline.
+     * Ưu tiên newline.
      */
 
     let splitAt =
@@ -1489,7 +1235,7 @@ function splitText(
 
 
     /*
-     * Không có vị trí phù hợp:
+     * Nếu không có:
      * cắt cứng.
      */
 
@@ -1544,9 +1290,7 @@ function splitText(
    ESCAPE MARKDOWN
 ========================================================= */
 
-function escapeMarkdown(
-  text
-) {
+function escapeMarkdown(text) {
 
   return String(
     text || ''
@@ -1589,49 +1333,6 @@ function truncate(
     ) +
     '...'
   );
-}
-
-
-/* =========================================================
-   USER LABEL
-========================================================= */
-
-function getUserLabel(
-  interaction
-) {
-
-  try {
-
-    if (
-      interaction.user?.tag
-    ) {
-
-      return interaction.user.tag;
-    }
-
-
-    if (
-      interaction.user?.username
-    ) {
-
-      return interaction.user.username;
-    }
-
-
-    if (
-      interaction.member?.user?.tag
-    ) {
-
-      return interaction.member.user.tag;
-    }
-
-
-    return 'Unknown User';
-
-  } catch {
-
-    return 'Unknown User';
-  }
 }
 
 
