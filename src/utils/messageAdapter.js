@@ -1,170 +1,741 @@
-import { logger } from './logger.js';
+import {
+  EmbedBuilder,
+  SlashCommandBuilder,
+} from 'discord.js';
+
+import { logger } from '../utils/logger.js';
 
 /* =========================================================
-   MESSAGE ADAPTER
-   ---------------------------------------------------------
-   Dùng cho PREFIX COMMANDS
-
-   Ví dụ:
-
-   !lyric Ed Sheeran Shape of You
-
-   sẽ được truyền vào command:
-
-   execute(message, ['Ed', 'Sheeran', 'Shape', 'of', 'You'], client)
-
-   Không truyền object args làm argument thứ 2.
+   CONFIG
 ========================================================= */
 
+const LYRIC_CHANNEL_ID = '1537723665754357780';
 
-/* =========================================================
-   PREFIX EXECUTION SUPPORT
-========================================================= */
+const LYRICS_API_URL = 'https://lrclib.net/api/search';
 
-/**
- * Kiểm tra command có thể chạy bằng prefix hay không.
- *
- * Mặc định:
- * - Nếu command có execute() => cho phép.
- * - Nếu command có prefix: false => không cho phép.
- * - Nếu command có prefixOnly / prefixEnabled => tôn trọng cấu hình.
- *
- * Có thể dùng:
- *
- * export default {
- *   name: 'lyric',
- *   prefix: true,
- *   execute() {}
- * }
- *
- * hoặc đơn giản:
- *
- * export default {
- *   name: 'lyric',
- *   execute() {}
- * }
- */
-export function supportsPrefixExecution(command) {
-  if (!command || typeof command !== 'object') {
-    return false;
-  }
+const API_TIMEOUT_MS = 10000;
 
-  if (typeof command.execute !== 'function') {
-    return false;
-  }
+const MAX_LYRICS_LENGTH = 3800;
 
-  /*
-   * Cho phép command chủ động tắt prefix.
-   */
-  if (command.prefix === false) {
-    return false;
-  }
-
-  if (command.prefixEnabled === false) {
-    return false;
-  }
-
-  if (command.allowPrefix === false) {
-    return false;
-  }
-
-  /*
-   * prefixOnly === true nghĩa là command chắc chắn
-   * hỗ trợ prefix.
-   */
-  if (command.prefixOnly === true) {
-    return true;
-  }
-
-  /*
-   * Mặc định command có execute() sẽ được phép.
-   */
-  return true;
-}
+const MAX_LYRICS_PAGES = 10;
 
 
 /* =========================================================
-   NORMALIZE PREFIX ARGS
-   ---------------------------------------------------------
-   Đây là phần QUAN TRỌNG nhất.
-
-   Đảm bảo mọi command nhận:
-
-   args = ['Ed', 'Sheeran', 'Shape', 'of', 'You']
-
-   thay vì:
-
-   args = {
-      ...
-   }
-
-   hoặc:
-
-   args = '[object Object]'
+   COMMAND
 ========================================================= */
 
-export function normalizePrefixArgs(args) {
-  if (
-    args === undefined ||
-    args === null
-  ) {
-    return [];
-  }
+const command = {
+
+  name: 'lyric',
+
+  category: 'music',
+
+  description: 'Tìm lời bài hát',
+
+  /*
+   * Cho phép chạy bằng prefix:
+   *
+   * !lyric Shape of You
+   */
+
+  prefix: true,
+
+  /*
+   * Slash command.
+   */
+
+  data:
+    new SlashCommandBuilder()
+      .setName('lyric')
+      .setDescription('Tìm lời bài hát')
+      .addStringOption(option =>
+        option
+          .setName('song')
+          .setDescription(
+            'Tên bài hát hoặc ca sĩ + tên bài hát'
+          )
+          .setRequired(true)
+      ),
 
 
-  /* -----------------------------------------
-     Array
-  ----------------------------------------- */
+  /* =======================================================
+     EXECUTE
+  ======================================================= */
 
-  if (Array.isArray(args)) {
-    return args
-      .flatMap(value => normalizeSingleArg(value))
-      .filter(Boolean);
-  }
+  async execute(message, args, client) {
 
+    try {
 
-  /* -----------------------------------------
-     String
-  ----------------------------------------- */
+      /* ---------------------------------------------------
+         VALIDATE
+      --------------------------------------------------- */
 
-  if (typeof args === 'string') {
-    return splitArgumentString(args);
-  }
-
-
-  /* -----------------------------------------
-     Object
-  ----------------------------------------- */
-
-  if (typeof args === 'object') {
-
-    /*
-     * Một số parser có thể truyền:
-     *
-     * {
-     *   args: ['Ed', 'Sheeran', 'Shape', 'of', 'You']
-     * }
-     */
-
-    const possibleArrayKeys = [
-      'args',
-      'arguments',
-      'params',
-      'parameters',
-    ];
-
-    for (const key of possibleArrayKeys) {
-      if (Array.isArray(args[key])) {
-        return normalizePrefixArgs(args[key]);
+      if (!message) {
+        logger.warn('[LYRIC] Message không tồn tại.');
+        return;
       }
+
+      if (!message.channel) {
+        logger.warn('[LYRIC] Message không có channel.');
+        return;
+      }
+
+
+      /* ---------------------------------------------------
+         CHANNEL RESTRICTION
+      --------------------------------------------------- */
+
+      if (
+        message.channel.id !== LYRIC_CHANNEL_ID
+      ) {
+
+        await sendEmbed(
+          message,
+          {
+            title: '🎵 Sai kênh sử dụng',
+
+            description:
+              [
+                'Lệnh `!lyric` chỉ được sử dụng tại:',
+                '',
+                `<#${LYRIC_CHANNEL_ID}>`,
+              ].join('\n'),
+
+            color: 0xffa500,
+          }
+        );
+
+        return;
+      }
+
+
+      /* ---------------------------------------------------
+         NORMALIZE ARGS
+      --------------------------------------------------- */
+
+      const query =
+        normalizeLyricsQuery(args);
+
+
+      logger.info(
+        `[LYRIC] ${message.author?.tag || 'Unknown'} searched: "${query}"`
+      );
+
+
+      /* ---------------------------------------------------
+         EMPTY QUERY
+      --------------------------------------------------- */
+
+      if (!query) {
+
+        await sendEmbed(
+          message,
+          {
+            title: '🎵 Cách sử dụng !lyric',
+
+            description:
+              [
+                'Bạn chưa nhập tên bài hát.',
+                '',
+                '**Ví dụ:**',
+                '`!lyric Shape of You`',
+                '`!lyric Ed Sheeran Shape of You`',
+                '',
+                'Nên nhập cả tên ca sĩ và tên bài hát để tìm chính xác hơn.',
+              ].join('\n'),
+
+            color: 0x5865f2,
+          }
+        );
+
+        return;
+      }
+
+
+      /* ---------------------------------------------------
+         LOADING
+      --------------------------------------------------- */
+
+      const loadingMessage =
+        await message.channel
+          .send({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle('🎵 Đang tìm bài hát...')
+                .setDescription(
+                  `Đang tìm **${escapeMarkdown(query)}**...`
+                )
+                .setColor(0x5865f2),
+            ],
+          })
+          .catch(error => {
+
+            logger.warn(
+              '[LYRIC] Không thể gửi loading:',
+              error?.message || error
+            );
+
+            return null;
+          });
+
+
+      /* ---------------------------------------------------
+         SEARCH
+      --------------------------------------------------- */
+
+      const result =
+        await searchLyrics(query);
+
+
+      /* ---------------------------------------------------
+         NOT FOUND
+      --------------------------------------------------- */
+
+      if (!result) {
+
+        const embed =
+          new EmbedBuilder()
+            .setTitle('❌ Không tìm thấy bài hát')
+            .setDescription(
+              [
+                `Không tìm thấy lyrics cho **${escapeMarkdown(query)}**.`,
+                '',
+                'Bạn có thể thử nhập cả **tên ca sĩ + tên bài hát**.',
+                '',
+                '**Ví dụ:**',
+                '`!lyric Ed Sheeran Shape of You`',
+                '`!lyric Adele Hello`',
+              ].join('\n')
+            )
+            .setColor(0xed4245);
+
+        await updateOrSend(
+          message,
+          loadingMessage,
+          embed
+        );
+
+        return;
+      }
+
+
+      /* ---------------------------------------------------
+         GET LYRICS
+      --------------------------------------------------- */
+
+      const lyrics =
+        getLyricsText(result);
+
+
+      if (!lyrics) {
+
+        const embed =
+          new EmbedBuilder()
+            .setTitle('❌ Không có lyrics')
+            .setDescription(
+              [
+                `Đã tìm thấy **${escapeMarkdown(
+                  result.trackName || query
+                )}**.`,
+                '',
+                'Nhưng API không trả về phần lời bài hát.',
+                '',
+                'Bạn có thể thử nhập lại với tên ca sĩ:',
+                '`!lyric Tên ca sĩ Tên bài hát`',
+              ].join('\n')
+            )
+            .setColor(0xed4245);
+
+        await updateOrSend(
+          message,
+          loadingMessage,
+          embed
+        );
+
+        return;
+      }
+
+
+      /* ---------------------------------------------------
+         SPLIT LYRICS
+      --------------------------------------------------- */
+
+      let chunks =
+        splitText(
+          lyrics,
+          MAX_LYRICS_LENGTH
+        );
+
+
+      if (!chunks.length) {
+
+        const embed =
+          new EmbedBuilder()
+            .setTitle('❌ Không có lyrics')
+            .setDescription(
+              'API không trả về nội dung lyrics hợp lệ.'
+            )
+            .setColor(0xed4245);
+
+        await updateOrSend(
+          message,
+          loadingMessage,
+          embed
+        );
+
+        return;
+      }
+
+
+      /*
+       * Giới hạn số trang.
+       */
+
+      if (
+        chunks.length >
+        MAX_LYRICS_PAGES
+      ) {
+
+        logger.warn(
+          `[LYRIC] Lyrics quá dài: ${chunks.length} pages`
+        );
+
+        chunks =
+          chunks.slice(
+            0,
+            MAX_LYRICS_PAGES
+          );
+      }
+
+
+      /* ---------------------------------------------------
+         FIRST PAGE
+      --------------------------------------------------- */
+
+      const firstEmbed =
+        createLyricsEmbed(
+          result,
+          chunks[0],
+          1,
+          chunks.length
+        );
+
+
+      if (loadingMessage) {
+
+        const edited =
+          await loadingMessage
+            .edit({
+              embeds: [
+                firstEmbed,
+              ],
+            })
+            .then(() => true)
+            .catch(error => {
+
+              logger.warn(
+                '[LYRIC] Không thể edit loading:',
+                error?.message || error
+              );
+
+              return false;
+            });
+
+
+        if (!edited) {
+
+          await message.channel
+            .send({
+              embeds: [
+                firstEmbed,
+              ],
+            })
+            .catch(error => {
+
+              logger.warn(
+                '[LYRIC] Không thể gửi lyrics:',
+                error?.message || error
+              );
+
+            });
+        }
+
+      } else {
+
+        await message.channel
+          .send({
+            embeds: [
+              firstEmbed,
+            ],
+          })
+          .catch(error => {
+
+            logger.warn(
+              '[LYRIC] Không thể gửi lyrics:',
+              error?.message || error
+            );
+
+          });
+      }
+
+
+      /* ---------------------------------------------------
+         OTHER PAGES
+      --------------------------------------------------- */
+
+      for (
+        let index = 1;
+        index < chunks.length;
+        index++
+      ) {
+
+        const embed =
+          createLyricsEmbed(
+            result,
+            chunks[index],
+            index + 1,
+            chunks.length
+          );
+
+
+        await message.channel
+          .send({
+            embeds: [
+              embed,
+            ],
+          })
+          .catch(error => {
+
+            logger.warn(
+              `[LYRIC] Không thể gửi page ${
+                index + 1
+              }:`,
+              error?.message || error
+            );
+
+          });
+      }
+
+
+      logger.info(
+        `[LYRIC] Successfully returned "${result.trackName || query}"`
+      );
+
+    } catch (error) {
+
+      logger.error(
+        '[LYRIC] Command error:',
+        error
+      );
+
+
+      await sendEmbed(
+        message,
+        {
+          title: '❌ Lỗi lyrics',
+
+          description:
+            'Đã xảy ra lỗi khi tìm lời bài hát. Vui lòng thử lại sau.',
+
+          color: 0xed4245,
+        }
+      );
+
+    }
+
+  },
+
+};
+
+
+/* =========================================================
+   SEARCH LRCLIB
+========================================================= */
+
+async function searchLyrics(query) {
+
+  if (
+    typeof query !== 'string' ||
+    !query.trim()
+  ) {
+    return null;
+  }
+
+
+  const controller =
+    new AbortController();
+
+
+  const timeout =
+    setTimeout(
+      () => controller.abort(),
+      API_TIMEOUT_MS
+    );
+
+
+  try {
+
+    const url =
+      new URL(
+        LYRICS_API_URL
+      );
+
+
+    url.searchParams.set(
+      'q',
+      query.trim()
+    );
+
+
+    const response =
+      await fetch(
+        url,
+        {
+          method: 'GET',
+
+          headers: {
+            Accept: 'application/json',
+
+            'User-Agent':
+              'DiscordBot-Lyric/1.0',
+          },
+
+          signal: controller.signal,
+        }
+      );
+
+
+    if (!response.ok) {
+
+      logger.warn(
+        `[LYRIC] LRCLIB HTTP ${response.status}`
+      );
+
+      return null;
+    }
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !Array.isArray(data) ||
+      data.length === 0
+    ) {
+
+      return null;
     }
 
 
     /*
-     * Object có query/text/content/value.
+     * Ưu tiên kết quả có plainLyrics.
      */
 
-    const possibleStringKeys = [
+    const plain =
+      data.find(
+        item =>
+          typeof item?.plainLyrics === 'string' &&
+          item.plainLyrics.trim().length > 0
+      );
+
+
+    if (plain) {
+      return plain;
+    }
+
+
+    /*
+     * Fallback syncedLyrics.
+     */
+
+    const synced =
+      data.find(
+        item =>
+          typeof item?.syncedLyrics === 'string' &&
+          item.syncedLyrics.trim().length > 0
+      );
+
+
+    if (synced) {
+      return synced;
+    }
+
+
+    return null;
+
+  } catch (error) {
+
+    if (
+      error?.name === 'AbortError'
+    ) {
+
+      logger.warn(
+        `[LYRIC] LRCLIB timeout after ${API_TIMEOUT_MS}ms`
+      );
+
+    } else {
+
+      logger.error(
+        '[LYRIC] LRCLIB error:',
+        error
+      );
+
+    }
+
+
+    return null;
+
+  } finally {
+
+    clearTimeout(timeout);
+
+  }
+
+}
+
+
+/* =========================================================
+   GET LYRICS TEXT
+========================================================= */
+
+function getLyricsText(result) {
+
+  if (!result) {
+    return '';
+  }
+
+
+  if (
+    typeof result.plainLyrics === 'string' &&
+    result.plainLyrics.trim()
+  ) {
+
+    return cleanLyrics(
+      result.plainLyrics
+    );
+  }
+
+
+  if (
+    typeof result.syncedLyrics === 'string' &&
+    result.syncedLyrics.trim()
+  ) {
+
+    return cleanSyncedLyrics(
+      result.syncedLyrics
+    );
+  }
+
+
+  return '';
+}
+
+
+/* =========================================================
+   CLEAN LYRICS
+========================================================= */
+
+function cleanLyrics(text) {
+
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+
+}
+
+
+/* =========================================================
+   CLEAN SYNCED LYRICS
+========================================================= */
+
+function cleanSyncedLyrics(text) {
+
+  return String(text || '')
+    .split(/\r?\n/)
+    .map(line => {
+
+      /*
+       * Xóa timestamp:
+       *
+       * [00:12.34]
+       * [01:02.123]
+       */
+
+      return line
+        .replace(
+          /^\s*\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*/,
+          ''
+        )
+        .trim();
+
+    })
+    .filter(Boolean)
+    .join('\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+
+}
+
+
+/* =========================================================
+   NORMALIZE QUERY
+   ---------------------------------------------------------
+   messageAdapter hiện tại luôn truyền Array.
+   Ví dụ:
+   ['Ed', 'Sheeran', 'Shape', 'of', 'You']
+========================================================= */
+
+function normalizeLyricsQuery(args) {
+
+  if (
+    args === undefined ||
+    args === null
+  ) {
+    return '';
+  }
+
+
+  /*
+   * Array - trường hợp chuẩn của adapter.
+   */
+
+  if (Array.isArray(args)) {
+
+    return args
+      .flatMap(value =>
+        normalizeSingleArgument(value)
+      )
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+
+  }
+
+
+  /*
+   * String - fallback.
+   */
+
+  if (typeof args === 'string') {
+
+    return args.trim();
+
+  }
+
+
+  /*
+   * Object - fallback an toàn.
+   *
+   * Không bao giờ String(object)
+   * vì sẽ tạo [object Object].
+   */
+
+  if (typeof args === 'object') {
+
+    const keys = [
       'query',
       'text',
       'content',
@@ -176,82 +747,81 @@ export function normalizePrefixArgs(args) {
       'title',
     ];
 
-    for (const key of possibleStringKeys) {
+
+    for (const key of keys) {
+
+      const value =
+        args[key];
+
+
       if (
-        typeof args[key] === 'string' &&
-        args[key].trim()
+        typeof value === 'string' &&
+        value.trim()
       ) {
-        return splitArgumentString(args[key]);
+
+        return value.trim();
       }
+
+
+      if (
+        Array.isArray(value)
+      ) {
+
+        const result =
+          value
+            .flatMap(item =>
+              normalizeSingleArgument(item)
+            )
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+
+
+        if (result) {
+          return result;
+        }
+      }
+
     }
 
 
-    /*
-     * Một số parser có:
-     *
-     * {
-     *   name: 'lyric',
-     *   args: [...]
-     * }
-     */
-
-    if (
-      args.args !== undefined &&
-      args.args !== args
-    ) {
-      return normalizePrefixArgs(args.args);
-    }
-
-
-    /*
-     * Không bao giờ:
-     *
-     * String(args)
-     *
-     * vì sẽ tạo:
-     *
-     * [object Object]
-     */
-
-    return [];
+    return '';
   }
 
 
-  /* -----------------------------------------
-     Primitive
-  ----------------------------------------- */
+  return String(args).trim();
 
-  return [
-    String(args).trim()
-  ].filter(Boolean);
 }
 
 
 /* =========================================================
-   NORMALIZE ONE ARG
+   NORMALIZE ONE ARGUMENT
 ========================================================= */
 
-function normalizeSingleArg(value) {
+function normalizeSingleArgument(value) {
+
   if (
     value === undefined ||
     value === null
   ) {
-    return [];
+    return '';
   }
 
 
   if (typeof value === 'string') {
-    return [value.trim()].filter(Boolean);
+
+    return value.trim();
+
   }
 
 
-  if (typeof value === 'number') {
-    return [String(value)];
-  }
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  ) {
 
+    return String(value);
 
-  if (typeof value === 'boolean') {
-    return [String(value)];
   }
 
 
@@ -266,415 +836,359 @@ function normalizeSingleArg(value) {
       'input',
     ];
 
+
     for (const key of keys) {
 
       if (
         typeof value[key] === 'string' &&
         value[key].trim()
       ) {
-        return [value[key].trim()];
+
+        return value[key].trim();
       }
+
     }
 
-    return [];
+
+    return '';
   }
 
 
-  return [
-    String(value).trim()
-  ].filter(Boolean);
+  return '';
+
 }
 
 
 /* =========================================================
-   SPLIT ARGUMENT STRING
+   CREATE LYRICS EMBED
 ========================================================= */
 
-function splitArgumentString(text) {
-  if (
-    typeof text !== 'string' ||
-    !text.trim()
-  ) {
-    return [];
-  }
-
-  /*
-   * Prefix command đã được parser tách command name
-   * trước khi gọi adapter.
-   *
-   * Vì vậy ở đây chỉ cần tách phần arguments.
-   *
-   * Ví dụ:
-   *
-   * "Ed Sheeran Shape of You"
-   *
-   * =>
-   *
-   * [
-   *   "Ed",
-   *   "Sheeran",
-   *   "Shape",
-   *   "of",
-   *   "You"
-   * ]
-   */
-
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
-
-
-/* =========================================================
-   EXECUTE PREFIX COMMAND
-   ========================================================= */
-
-/**
- * Chạy command bằng prefix.
- *
- * Chuẩn signature:
- *
- * command.execute(
- *   message,
- *   args,
- *   client
- * )
- *
- * Trong đó:
- *
- * args luôn là Array.
- */
-export async function executePrefixCommand(
-  command,
-  message,
-  args,
-  client,
-  prefix = '!',
-  guildConfig = null
+function createLyricsEmbed(
+  result,
+  lyrics,
+  page = 1,
+  totalPages = 1
 ) {
-  if (!command) {
-    throw new Error(
-      'Prefix command does not exist.'
-    );
-  }
+
+  const trackName =
+    result?.trackName ||
+    'Không rõ tên bài hát';
 
 
-  if (!message) {
-    throw new Error(
-      'Discord message is missing.'
-    );
-  }
+  const artistName =
+    result?.artistName ||
+    'Không rõ ca sĩ';
 
 
-  if (
-    typeof command.execute !== 'function'
-  ) {
-    throw new Error(
-      `Command "${command.name || command.data?.name || 'unknown'}" does not have execute().`
-    );
-  }
+  const albumName =
+    result?.albumName ||
+    '';
 
 
-  /*
-   * NORMALIZE ARGS
-   *
-   * Đây là fix chính cho !lyric.
-   */
-
-  const normalizedArgs =
-    normalizePrefixArgs(args);
-
-
-  const commandName =
-    command.name ||
-    command.data?.name ||
-    'unknown';
-
-
-  logger.debug?.(
-    `[PREFIX] Executing "${commandName}" with args: ${JSON.stringify(normalizedArgs)}`
-  );
-
-
-  /*
-   * -------------------------------------------------------
-   * QUAN TRỌNG
-   *
-   * Không truyền:
-   *
-   * {
-   *   args,
-   *   prefix,
-   *   guildConfig
-   * }
-   *
-   * vào vị trí args.
-   *
-   * lyric.js cần:
-   *
-   * execute(message, args, client)
-   * -------------------------------------------------------
-   */
-
-
-  try {
-
-    const result =
-      await command.execute(
-        message,
-        normalizedArgs,
-        client
+  const embed =
+    new EmbedBuilder()
+      .setTitle(
+        `🎵 ${truncate(
+          trackName,
+          240
+        )}`
+      )
+      .setDescription(
+        lyrics
+      )
+      .setColor(
+        0x5865f2
       );
 
 
-    return result;
+  const footer = [];
 
-  } catch (error) {
 
-    logger.error(
-      `[PREFIX] Error executing "${commandName}":`,
-      error
+  if (artistName) {
+    footer.push(artistName);
+  }
+
+
+  if (albumName) {
+    footer.push(albumName);
+  }
+
+
+  if (totalPages > 1) {
+
+    footer.push(
+      `Trang ${page}/${totalPages}`
+    );
+  }
+
+
+  if (footer.length) {
+
+    embed.setFooter({
+      text:
+        footer.join(' • '),
+    });
+
+  }
+
+
+  return embed;
+
+}
+
+
+/* =========================================================
+   UPDATE OR SEND
+========================================================= */
+
+async function updateOrSend(
+  message,
+  loadingMessage,
+  embed
+) {
+
+  if (loadingMessage) {
+
+    const edited =
+      await loadingMessage
+        .edit({
+          embeds: [
+            embed,
+          ],
+        })
+        .then(() => true)
+        .catch(error => {
+
+          logger.warn(
+            '[LYRIC] Edit message failed:',
+            error?.message || error
+          );
+
+          return false;
+        });
+
+
+    if (edited) {
+      return;
+    }
+
+  }
+
+
+  await message.channel
+    .send({
+      embeds: [
+        embed,
+      ],
+    })
+    .catch(error => {
+
+      logger.warn(
+        '[LYRIC] Send embed failed:',
+        error?.message || error
+      );
+
+    });
+
+}
+
+
+/* =========================================================
+   SEND EMBED
+========================================================= */
+
+async function sendEmbed(
+  message,
+  {
+    title,
+    description,
+    color = 0x5865f2,
+  }
+) {
+
+  if (!message?.channel) {
+    return null;
+  }
+
+
+  return message.channel
+    .send({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle(title)
+          .setDescription(description)
+          .setColor(color),
+      ],
+    })
+    .catch(error => {
+
+      logger.warn(
+        '[LYRIC] Không thể gửi embed:',
+        error?.message || error
+      );
+
+      return null;
+    });
+
+}
+
+
+/* =========================================================
+   SPLIT TEXT
+========================================================= */
+
+function splitText(
+  text,
+  maxLength = 3800
+) {
+
+  const normalized =
+    String(text || '').trim();
+
+
+  if (!normalized) {
+    return [];
+  }
+
+
+  if (
+    normalized.length <= maxLength
+  ) {
+
+    return [
+      normalized,
+    ];
+  }
+
+
+  const chunks = [];
+
+  let remaining =
+    normalized;
+
+
+  while (
+    remaining.length > maxLength
+  ) {
+
+    /*
+     * Ưu tiên cắt tại xuống dòng.
+     */
+
+    let splitAt =
+      remaining.lastIndexOf(
+        '\n',
+        maxLength
+      );
+
+
+    /*
+     * Nếu xuống dòng quá gần đầu,
+     * cắt tại khoảng trắng.
+     */
+
+    if (splitAt < 500) {
+
+      splitAt =
+        remaining.lastIndexOf(
+          ' ',
+          maxLength
+        );
+    }
+
+
+    /*
+     * Không tìm được vị trí phù hợp.
+     */
+
+    if (splitAt <= 0) {
+
+      splitAt =
+        maxLength;
+    }
+
+
+    const chunk =
+      remaining
+        .slice(
+          0,
+          splitAt
+        )
+        .trim();
+
+
+    if (chunk) {
+      chunks.push(chunk);
+    }
+
+
+    remaining =
+      remaining
+        .slice(splitAt)
+        .trim();
+
+  }
+
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+
+  return chunks;
+
+}
+
+
+/* =========================================================
+   ESCAPE MARKDOWN
+========================================================= */
+
+function escapeMarkdown(text) {
+
+  return String(text || '')
+    .replace(
+      /[`*_~|>]/g,
+      '\\$&'
     );
 
-    throw error;
-  }
 }
 
 
 /* =========================================================
-   PREFIX ACCESS KEY
+   TRUNCATE
 ========================================================= */
 
-/**
- * Tạo key dùng cho commandAccessService.
- *
- * Ví dụ:
- *
- * lyric
- * clearuser
- * faq
- *
- * Với subcommand:
- *
- * !music play
- *
- * có thể trở thành:
- *
- * music.play
- */
-export function resolvePrefixAccessKey(
-  commandData,
-  args = []
+function truncate(
+  text,
+  maxLength
 ) {
-  if (!commandData) {
-    return '';
-  }
 
-
-  const commandName =
-    typeof commandData === 'string'
-      ? commandData
-      : commandData.name;
-
-
-  if (!commandName) {
-    return '';
-  }
-
-
-  const normalizedArgs =
-    normalizePrefixArgs(args);
-
-
-  /*
-   * Không có subcommand.
-   */
-
-  if (
-    normalizedArgs.length === 0
-  ) {
-    return commandName;
-  }
-
-
-  /*
-   * Tìm option subcommand nếu commandData
-   * là SlashCommandBuilder JSON.
-   */
-
-  const options =
-    Array.isArray(commandData.options)
-      ? commandData.options
-      : [];
-
-
-  const firstArg =
-    normalizedArgs[0];
-
-
-  const subcommand =
-    options.find(
-      option =>
-        option &&
-        option.type === 1 &&
-        option.name === firstArg
-    );
-
-
-  if (subcommand) {
-    return `${commandName}.${firstArg}`;
-  }
-
-
-  return commandName;
-}
-
-
-/* =========================================================
-   PARSE PREFIX MESSAGE
-   ---------------------------------------------------------
-   Adapter độc lập với prefixParser.
-========================================================= */
-
-export function parsePrefixMessage(
-  content,
-  prefix = '!'
-) {
-  if (
-    typeof content !== 'string' ||
-    !content.trim()
-  ) {
-    return null;
-  }
+  const value =
+    String(text || '');
 
 
   if (
-    typeof prefix !== 'string' ||
-    !prefix
+    value.length <= maxLength
   ) {
-    prefix = '!';
-  }
 
-
-  if (
-    !content.startsWith(prefix)
-  ) {
-    return null;
-  }
-
-
-  const body =
-    content
-      .slice(prefix.length)
-      .trim();
-
-
-  if (!body) {
-    return null;
-  }
-
-
-  const parts =
-    body.split(/\s+/);
-
-
-  const commandName =
-    parts.shift()?.toLowerCase();
-
-
-  if (!commandName) {
-    return null;
-  }
-
-
-  return {
-    commandName,
-    args: parts,
-    rawArgs: parts.join(' '),
-  };
-}
-
-
-/* =========================================================
-   GET COMMAND NAME
-========================================================= */
-
-export function getCommandName(command) {
-  if (!command) {
-    return '';
-  }
-
-
-  if (
-    typeof command === 'string'
-  ) {
-    return command;
+    return value;
   }
 
 
   return (
-    command.name ||
-    command.data?.name ||
-    ''
+    value.slice(
+      0,
+      maxLength - 3
+    ) +
+    '...'
   );
+
 }
 
 
 /* =========================================================
-   GET COMMAND ARGS AS TEXT
+   EXPORT
 ========================================================= */
 
-export function getPrefixArgsText(args) {
-  return normalizePrefixArgs(args).join(' ');
-}
-
-
-/* =========================================================
-   CREATE PREFIX CONTEXT
-   ---------------------------------------------------------
-   Hữu ích nếu command nào đó cần thông tin bổ sung.
-========================================================= */
-
-export function createPrefixContext({
-  message,
-  args = [],
-  client,
-  prefix = '!',
-  guildConfig = null,
-} = {}) {
-  const normalizedArgs =
-    normalizePrefixArgs(args);
-
-  return {
-    message,
-    args: normalizedArgs,
-    client,
-    prefix,
-    guildConfig,
-    commandName:
-      message?.content
-        ?.slice(prefix.length)
-        ?.trim()
-        ?.split(/\s+/)[0]
-        ?.toLowerCase() || '',
-    rawArgs:
-      normalizedArgs.join(' '),
-  };
-}
-
-
-/* =========================================================
-   DEFAULT EXPORT
-========================================================= */
-
-export default {
-  supportsPrefixExecution,
-  executePrefixCommand,
-  resolvePrefixAccessKey,
-  normalizePrefixArgs,
-  parsePrefixMessage,
-  getCommandName,
-  getPrefixArgsText,
-  createPrefixContext,
-};
+export default command;
