@@ -109,11 +109,7 @@ const command = {
      EXECUTE
   ======================================================= */
 
-  async execute(
-    message,
-    args,
-    client
-  ) {
+ async execute(interaction, guildConfig, client) {
 
     try {
 
