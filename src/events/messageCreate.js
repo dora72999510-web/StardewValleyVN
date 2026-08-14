@@ -70,7 +70,7 @@ const ALLOWED_PREFIX_COMMANDS = new Set([
    Thay ID bên dưới bằng ID channel bạn muốn dùng.
 
    Hiện tại đang dùng:
-   1510183614535569448
+   1537723665754357780
 ========================================================= */
 
 const LYRIC_CHANNEL_ID = '1537723665754357780';
