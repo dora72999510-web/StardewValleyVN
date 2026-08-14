@@ -1,4 +1,9 @@
-import { Events, PermissionsBitField } from 'discord.js';
+import {
+  EmbedBuilder,
+  Events,
+  PermissionsBitField,
+} from 'discord.js';
+
 import { logger } from '../utils/logger.js';
 
 import {
@@ -80,6 +85,16 @@ const XP_RATE_LIMIT_WINDOW_MS =
 const PROTECTED_CHANNELS = [
   '1521007503263928341',
 ];
+
+
+/* =========================================================
+   LOG CHANNEL
+   ---------------------------------------------------------
+   Channel nhận thông báo khi user bị timeout.
+========================================================= */
+
+const PROTECTED_LOG_CHANNEL_ID =
+  '1510871300132835368';
 
 
 /* =========================================================
@@ -260,6 +275,10 @@ async function handleProtectedChannels(
 
   try {
 
+    /* =====================================================
+       CHECK PROTECTED CHANNEL
+    ===================================================== */
+
     if (
       !PROTECTED_CHANNELS.includes(
         message.channel.id
@@ -280,11 +299,24 @@ async function handleProtectedChannels(
           message.author.id
         )
         .catch(
-          () => null
+          error => {
+
+            logger.error(
+              `[PROTECTED] Không thể fetch member ${message.author.id}:`,
+              error
+            );
+
+            return null;
+          }
         );
 
 
     if (!member) {
+
+      logger.warn(
+        `[PROTECTED] Không tìm thấy member ${message.author.id}.`
+      );
+
       return true;
     }
 
@@ -316,6 +348,10 @@ async function handleProtectedChannels(
 
     ) {
 
+      logger.info(
+        `[PROTECTED] ${member.user.tag} được bypass.`
+      );
+
       return true;
     }
 
@@ -324,11 +360,23 @@ async function handleProtectedChannels(
        DELETE MESSAGE
     ===================================================== */
 
-    await message
-      .delete()
-      .catch(
-        () => {}
+    try {
+
+      await message.delete();
+
+      logger.info(
+        `[PROTECTED] Deleted message from ${member.user.tag}.`
       );
+
+    } catch (error) {
+
+      logger.warn(
+        `[PROTECTED] Không thể xóa message của ${member.user.tag}:`,
+        error?.message ||
+        error
+      );
+
+    }
 
 
     /* =====================================================
@@ -340,9 +388,21 @@ async function handleProtectedChannels(
     ) {
 
       logger.warn(
-        `Cannot timeout ${member.user.tag} ` +
-        `(role hierarchy issue)`
+        `[PROTECTED] Không thể timeout ${member.user.tag}. ` +
+        `Có thể bot thiếu quyền Moderate Members hoặc role bot thấp hơn member.`
       );
+
+
+      /*
+       * Vẫn gửi thông báo nếu không timeout được.
+       */
+
+      await sendProtectedWarning(
+        message,
+        member,
+        false
+      );
+
 
       return true;
     }
@@ -352,110 +412,66 @@ async function handleProtectedChannels(
        TIMEOUT
     ===================================================== */
 
-    await member.timeout(
-      PROTECTED_TIMEOUT,
-      'Message in protected channel'
-    );
+    let timeoutSuccess =
+      false;
 
 
-    logger.warn(
-      `Timeout applied to ${member.user.tag}`
-    );
+    try {
+
+      await member.timeout(
+        PROTECTED_TIMEOUT,
+        'Message in protected channel'
+      );
+
+
+      timeoutSuccess =
+        true;
+
+
+      logger.warn(
+        `[PROTECTED] Timeout applied to ${member.user.tag} for 24 hours.`
+      );
+
+
+    } catch (error) {
+
+      logger.error(
+        `[PROTECTED] Timeout FAILED for ${member.user.tag}:`,
+        error
+      );
+
+    }
 
 
     /* =====================================================
        DM USER
     ===================================================== */
 
-    await member
-      .send({
-
-        embeds: [
-
-          createEmbed({
-
-            title:
-              '🚫 Bạn đã bị hạn chế',
-
-            description:
-              'Bạn đã gửi tin trong kênh cảnh báo.\n' +
-              'Hình phạt: **hạn chế 1 ngày**.',
-
-            color:
-              'error',
-
-          }),
-
-        ],
-
-      })
-      .catch(
-        () => {}
-      );
+    await sendProtectedDM(
+      member,
+      timeoutSuccess
+    );
 
 
     /* =====================================================
        LOG CHANNEL
-       -----------------------------------------------------
-       Gửi embed vào channel log.
     ===================================================== */
 
-    const logChannel =
-      await message.guild.channels
-        .fetch(
-          '1510871300132835368'
-        )
-        .catch(
-          () => null
-        );
-
-
-    if (
-      logChannel?.isTextBased()
-    ) {
-
-      const embed =
-        new EmbedBuilder()
-
-          .setColor(
-            0xf1c40f
-          )
-
-          .setDescription(
-            `<:emoji_134:1523413261574471701> Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-            `do gửi nội dung vào <#1521007503263928341>`
-          );
-
-
-      await logChannel.send({
-
-        embeds: [
-          embed,
-        ],
-
-      });
-
-    }
+    await sendProtectedLog(
+      message,
+      member,
+      timeoutSuccess
+    );
 
 
     /* =====================================================
        WARNING MESSAGE
     ===================================================== */
 
-    const warn =
-      await message.channel.send(
-        `🚫 ${member} đã bị hạn chế 1 ngày.`
-      );
-
-
-    setTimeout(
-      () =>
-        warn
-          .delete()
-          .catch(
-            () => {}
-          ),
-      5000
+    await sendProtectedWarning(
+      message,
+      member,
+      timeoutSuccess
     );
 
 
@@ -472,6 +488,506 @@ async function handleProtectedChannels(
 
     return true;
 
+  }
+
+}
+
+
+/* =========================================================
+   SEND PROTECTED LOG
+========================================================= */
+
+async function sendProtectedLog(
+  message,
+  member,
+  timeoutSuccess
+) {
+
+  try {
+
+    /* =====================================================
+       FETCH LOG CHANNEL
+    ===================================================== */
+
+    const logChannel =
+      await message.guild.channels
+        .fetch(
+          PROTECTED_LOG_CHANNEL_ID
+        )
+        .catch(
+          error => {
+
+            logger.error(
+              `[PROTECTED] Không thể fetch log channel ${PROTECTED_LOG_CHANNEL_ID}:`,
+              error
+            );
+
+            return null;
+          }
+        );
+
+
+    if (!logChannel) {
+
+      logger.warn(
+        `[PROTECTED] Log channel ${PROTECTED_LOG_CHANNEL_ID} không tồn tại hoặc bot không thể fetch.`
+      );
+
+      return false;
+    }
+
+
+    /* =====================================================
+       CHECK TEXT CHANNEL
+    ===================================================== */
+
+    if (
+      !logChannel.isTextBased()
+    ) {
+
+      logger.warn(
+        `[PROTECTED] Log channel ${PROTECTED_LOG_CHANNEL_ID} không phải text-based channel.`
+      );
+
+      return false;
+    }
+
+
+    /* =====================================================
+       CHECK SEND PERMISSION
+    ===================================================== */
+
+    if (
+      message.guild.members.me
+    ) {
+
+      const permissions =
+        logChannel.permissionsFor(
+          message.guild.members.me
+        );
+
+
+      if (
+        permissions &&
+        !permissions.has(
+          PermissionsBitField.Flags.SendMessages
+        )
+      ) {
+
+        logger.error(
+          `[PROTECTED] Bot không có quyền SendMessages tại log channel ${PROTECTED_LOG_CHANNEL_ID}.`
+        );
+
+        return false;
+      }
+
+
+      if (
+        permissions &&
+        !permissions.has(
+          PermissionsBitField.Flags.EmbedLinks
+        )
+      ) {
+
+        logger.warn(
+          `[PROTECTED] Bot không có quyền EmbedLinks tại log channel. Sẽ thử gửi text.`
+        );
+
+
+        try {
+
+          await logChannel.send(
+            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+            `do gửi nội dung vào <#${message.channel.id}>.`
+          );
+
+
+          logger.info(
+            '[PROTECTED] Đã gửi log dạng text.'
+          );
+
+
+          return true;
+
+        } catch (error) {
+
+          logger.error(
+            '[PROTECTED] Không thể gửi log dạng text:',
+            error
+          );
+
+          return false;
+        }
+
+      }
+
+    }
+
+
+    /* =====================================================
+       CREATE EMBED
+    ===================================================== */
+
+    const embed =
+      new EmbedBuilder()
+        .setColor(
+          timeoutSuccess
+            ? 0xf1c40f
+            : 0xed4245
+        )
+        .setDescription(
+          timeoutSuccess
+
+            ?
+
+            `<:emoji_134:1523413261574471701> ` +
+            `Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+            `do gửi nội dung vào <#${message.channel.id}>.`
+
+            :
+
+            `⚠️ Tài khoản ${member} đã gửi nội dung ` +
+            `vào <#${message.channel.id}> nhưng bot ` +
+            `không thể áp dụng timeout.`
+        )
+        .setTimestamp();
+
+
+    /* =====================================================
+       SEND EMBED
+    ===================================================== */
+
+    try {
+
+      await logChannel.send({
+
+        embeds: [
+          embed,
+        ],
+
+      });
+
+
+      logger.info(
+        `[PROTECTED] Đã gửi log embed cho ${member.user.tag}.`
+      );
+
+
+      return true;
+
+    } catch (error) {
+
+      logger.error(
+        '[PROTECTED] Không thể gửi log embed:',
+        error
+      );
+
+
+      /* ===================================================
+         FALLBACK TEXT
+      =================================================== */
+
+      try {
+
+        await logChannel.send(
+          timeoutSuccess
+
+            ?
+
+            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+            `do gửi nội dung vào <#${message.channel.id}>.`
+
+            :
+
+            `⚠️ Tài khoản ${member} đã gửi nội dung ` +
+            `vào <#${message.channel.id}> nhưng bot ` +
+            `không thể áp dụng timeout.`
+        );
+
+
+        logger.info(
+          '[PROTECTED] Đã gửi log fallback dạng text.'
+        );
+
+
+        return true;
+
+      } catch (fallbackError) {
+
+        logger.error(
+          '[PROTECTED] Fallback log cũng thất bại:',
+          fallbackError
+        );
+
+
+        return false;
+      }
+
+    }
+
+  } catch (error) {
+
+    logger.error(
+      '[PROTECTED] Protected log error:',
+      error
+    );
+
+
+    return false;
+  }
+
+}
+
+
+/* =========================================================
+   SEND PROTECTED WARNING
+========================================================= */
+
+async function sendProtectedWarning(
+  message,
+  member,
+  timeoutSuccess
+) {
+
+  try {
+
+    if (
+      !message.channel ||
+      typeof message.channel.send !==
+        'function'
+    ) {
+
+      return false;
+    }
+
+
+    /* =====================================================
+       CREATE EMBED
+    ===================================================== */
+
+    const embed =
+      new EmbedBuilder()
+        .setColor(
+          timeoutSuccess
+            ? 0xf1c40f
+            : 0xed4245
+        )
+        .setDescription(
+          timeoutSuccess
+
+            ?
+
+            `🚫 ${member} đã bị hạn chế **1 ngày**.`
+
+            :
+
+            `⚠️ ${member} đã gửi nội dung vào ` +
+            `kênh cảnh báo nhưng bot không thể áp dụng timeout.`
+        )
+        .setTimestamp();
+
+
+    let warningMessage;
+
+
+    /* =====================================================
+       TRY EMBED
+    ===================================================== */
+
+    try {
+
+      warningMessage =
+        await message.channel.send({
+
+          embeds: [
+            embed,
+          ],
+
+        });
+
+
+    } catch (error) {
+
+      logger.error(
+        '[PROTECTED] Không thể gửi warning embed:',
+        error
+      );
+
+
+      /* ===================================================
+         FALLBACK TEXT
+      =================================================== */
+
+      try {
+
+        warningMessage =
+          await message.channel.send(
+
+            timeoutSuccess
+
+              ?
+
+              `🚫 ${member} đã bị hạn chế 1 ngày.`
+
+              :
+
+              `⚠️ ${member} đã bị phát hiện gửi nội dung trong kênh cảnh báo.`
+
+          );
+
+      } catch (fallbackError) {
+
+        logger.error(
+          '[PROTECTED] Không thể gửi warning text:',
+          fallbackError
+        );
+
+
+        return false;
+      }
+
+    }
+
+
+    /* =====================================================
+       DELETE WARNING AFTER 5 SECONDS
+    ===================================================== */
+
+    if (
+      warningMessage
+    ) {
+
+      setTimeout(
+        () => {
+
+          warningMessage
+            .delete()
+            .catch(
+              error => {
+
+                logger.debug(
+                  '[PROTECTED] Không thể xóa warning:',
+                  error?.message ||
+                  error
+                );
+
+              }
+            );
+
+        },
+        5000
+      );
+
+    }
+
+
+    return true;
+
+
+  } catch (error) {
+
+    logger.error(
+      '[PROTECTED] Warning message error:',
+      error
+    );
+
+
+    return false;
+  }
+
+}
+
+
+/* =========================================================
+   SEND PROTECTED DM
+========================================================= */
+
+async function sendProtectedDM(
+  member,
+  timeoutSuccess
+) {
+
+  try {
+
+    if (
+      !member
+    ) {
+
+      return false;
+    }
+
+
+    const embed =
+      new EmbedBuilder()
+        .setColor(
+          timeoutSuccess
+            ? 0xed4245
+            : 0xf1c40f
+        )
+        .setDescription(
+          timeoutSuccess
+
+            ?
+
+            '🚫 Bạn đã bị hạn chế sử dụng các tính năng tương tác trong server trong **1 ngày**.\n\n' +
+            'Lý do: gửi nội dung vào kênh cảnh báo.'
+
+            :
+
+            '⚠️ Bạn đã gửi nội dung vào kênh cảnh báo.\n\n' +
+            'Bot chưa thể áp dụng hình phạt tự động.'
+        )
+        .setTimestamp();
+
+
+    /* =====================================================
+       SEND DM
+    ===================================================== */
+
+    try {
+
+      await member.send({
+
+        embeds: [
+          embed,
+        ],
+
+      });
+
+
+      logger.info(
+        `[PROTECTED] Đã gửi DM cho ${member.user.tag}.`
+      );
+
+
+      return true;
+
+    } catch (error) {
+
+      /*
+       * User có thể tắt DM.
+       * Đây không phải lỗi nghiêm trọng.
+       */
+
+      logger.warn(
+        `[PROTECTED] Không thể gửi DM cho ${member.user.tag}:`,
+        error?.message ||
+        error
+      );
+
+
+      return false;
+    }
+
+  } catch (error) {
+
+    logger.error(
+      '[PROTECTED] DM error:',
+      error
+    );
+
+
+    return false;
   }
 
 }
@@ -561,24 +1077,42 @@ async function handleCountingGame(
       );
 
 
-      const msg =
-        await message.channel.send(
+      let msg;
 
-          `❌ Sai rồi <@${message.author.id}>. ` +
-          `Reset về **1**.`
 
+      try {
+
+        msg =
+          await message.channel.send(
+
+            `❌ Sai rồi <@${message.author.id}>. ` +
+            `Reset về **1**.`
+
+          );
+
+      } catch (error) {
+
+        logger.error(
+          'Counting warning send error:',
+          error
         );
 
+      }
 
-      setTimeout(
-        () =>
-          msg
-            .delete()
-            .catch(
-              () => {}
-            ),
-        10000
-      );
+
+      if (msg) {
+
+        setTimeout(
+          () =>
+            msg
+              .delete()
+              .catch(
+                () => {}
+              ),
+          10000
+        );
+
+      }
 
 
       return true;
@@ -711,30 +1245,38 @@ async function handlePrefixCommand(
         LYRIC_CHANNEL_ID
       ) {
 
-        await message.channel
-          .send({
+        try {
 
-            embeds: [
+          await message.channel
+            .send({
 
-              createEmbed({
+              embeds: [
 
-                title:
-                  '🎵 Lệnh Lyric',
+                createEmbed({
 
-                description:
-                  `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
+                  title:
+                    '🎵 Lệnh Lyric',
 
-                color:
-                  'info',
+                  description:
+                    `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
 
-              }),
+                  color:
+                    'info',
 
-            ],
+                }),
 
-          })
-          .catch(
-            () => {}
+              ],
+
+            });
+
+        } catch (error) {
+
+          logger.error(
+            '[PREFIX] Không thể gửi Lyric restriction message:',
+            error
           );
+
+        }
 
 
         return true;
@@ -803,33 +1345,41 @@ async function handlePrefixCommand(
         'lyric'
       ) {
 
-        await message.channel
-          .send({
+        try {
 
-            embeds: [
+          await message.channel
+            .send({
 
-              createEmbed({
+              embeds: [
 
-                title:
-                  '❌ Lyric chưa được load',
+                createEmbed({
 
-                description:
-                  'Bot không tìm thấy command `lyric` trong `client.commands`.\n\n' +
-                  'Hãy kiểm tra file:\n' +
-                  '`commands/lyric.js`\n\n' +
-                  'Đồng thời kiểm tra log lúc bot khởi động.',
+                  title:
+                    '❌ Lyric chưa được load',
 
-                color:
-                  'error',
+                  description:
+                    'Bot không tìm thấy command `lyric` trong `client.commands`.\n\n' +
+                    'Hãy kiểm tra file:\n' +
+                    '`commands/lyric.js`\n\n' +
+                    'Đồng thời kiểm tra log lúc bot khởi động.',
 
-              }),
+                  color:
+                    'error',
 
-            ],
+                }),
 
-          })
-          .catch(
-            () => {}
+              ],
+
+            });
+
+        } catch (error) {
+
+          logger.error(
+            '[PREFIX] Không thể gửi Lyric load error:',
+            error
           );
+
+        }
 
       }
 
@@ -870,31 +1420,39 @@ async function handlePrefixCommand(
         restriction.reason
       ) {
 
-        await message.channel
-          .send({
+        try {
 
-            embeds: [
+          await message.channel
+            .send({
 
-              createEmbed({
+              embeds: [
 
-                title:
-                  'Slash Only',
+                createEmbed({
 
-                description:
-                  `${restriction.reason}\n` +
-                  `Use \`/${resolvedName}\``,
+                  title:
+                    'Slash Only',
 
-                color:
-                  'info',
+                  description:
+                    `${restriction.reason}\n` +
+                    `Use \`/${resolvedName}\``,
 
-              }),
+                  color:
+                    'info',
 
-            ],
+                }),
 
-          })
-          .catch(
-            () => {}
+              ],
+
+            });
+
+        } catch (error) {
+
+          logger.error(
+            '[PREFIX] Không thể gửi restriction message:',
+            error
           );
+
+        }
 
       }
 
@@ -926,30 +1484,38 @@ async function handlePrefixCommand(
 
     if (!enabled) {
 
-      await message.channel
-        .send({
+      try {
 
-          embeds: [
+        await message.channel
+          .send({
 
-            createEmbed({
+            embeds: [
 
-              title:
-                'Disabled',
+              createEmbed({
 
-              description:
-                'Command is disabled on this server.',
+                title:
+                  'Disabled',
 
-              color:
-                'error',
+                description:
+                  'Command is disabled on this server.',
 
-            }),
+                color:
+                  'error',
 
-          ],
+              }),
 
-        })
-        .catch(
-          () => {}
+            ],
+
+          });
+
+      } catch (error) {
+
+        logger.error(
+          '[PREFIX] Không thể gửi Disabled message:',
+          error
         );
+
+      }
 
 
       return true;
@@ -980,32 +1546,40 @@ async function handlePrefixCommand(
 
     if (!abuse.allowed) {
 
-      await message.channel
-        .send({
+      try {
 
-          embeds: [
+        await message.channel
+          .send({
 
-            createEmbed({
+            embeds: [
 
-              title:
-                'Cooldown',
+              createEmbed({
 
-              description:
-                `Wait **${formatCooldownDuration(
-                  abuse.remainingMs
-                )}**`,
+                title:
+                  'Cooldown',
 
-              color:
-                'error',
+                description:
+                  `Wait **${formatCooldownDuration(
+                    abuse.remainingMs
+                  )}**`,
 
-            }),
+                color:
+                  'error',
 
-          ],
+              }),
 
-        })
-        .catch(
-          () => {}
+            ],
+
+          });
+
+      } catch (error) {
+
+        logger.error(
+          '[PREFIX] Không thể gửi cooldown message:',
+          error
         );
+
+      }
 
 
       return true;
