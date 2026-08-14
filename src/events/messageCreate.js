@@ -1,4 +1,3 @@
-Mình đã đổi như thế này nhưng chưa hiện embed 
 import {
   EmbedBuilder,
   Events,
@@ -413,15 +412,18 @@ async function handleProtectedChannels(message) {
         )
         .catch(() => null);
 
-
-    if (logChannel?.isTextBased()) {
+  if (logChannel?.isTextBased()) {
 
   const embed = new EmbedBuilder()
-  .setColor(#f1c40f)
-  .setDescription(
-    `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-    `do gửi nội dung vào <#1521007503263928341>.`
-  );
+    .setColor(0xf1c40f)
+    .setDescription(
+      `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+      `do gửi nội dung vào <#1521007503263928341>.`
+    );
+
+  await logChannel.send({
+    embeds: [embed],
+  });
 
 }
 
