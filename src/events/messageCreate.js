@@ -44,18 +44,16 @@ import {
 
 
 /* =========================================================
-   PREFIX COMMAND CONFIG
-========================================================= */
+   PREFIX COMMANDS
+   ---------------------------------------------------------
+   CHỈ CHO PHÉP:
 
-/*
- * CHỈ CHO PHÉP:
- *
- * !faq
- * !clearuser
- * !lyric
- *
- * Mọi prefix khác sẽ bị bỏ qua.
- */
+   !faq
+   !clearuser
+   !lyric
+
+   Mọi prefix command khác sẽ bị bỏ qua.
+========================================================= */
 
 const ALLOWED_PREFIX_COMMANDS = new Set([
   'faq',
@@ -66,27 +64,16 @@ const ALLOWED_PREFIX_COMMANDS = new Set([
 
 /* =========================================================
    LYRIC CONFIG
+   ---------------------------------------------------------
+   QUAN TRỌNG:
+
+   Thay ID bên dưới bằng ID channel bạn muốn dùng.
+
+   Hiện tại đang dùng:
+   1510183614535569448
 ========================================================= */
 
-/*
- * !lyric CHỈ được sử dụng trong channel này.
- *
- * ƯU TIÊN:
- *
- * 1. process.env.LYRIC_CHANNEL_ID
- * 2. ID bên dưới
- *
- * Ví dụ .env:
- *
- * LYRIC_CHANNEL_ID=123456789012345678
- *
- * Nếu muốn cố định trực tiếp trong code,
- * thay YOUR_LYRIC_CHANNEL_ID bằng ID channel.
- */
-
-const LYRIC_CHANNEL_ID =
-  process.env.LYRIC_CHANNEL_ID ||
-  '1510183614535569448';
+const LYRIC_CHANNEL_ID = '1510183614535569448';
 
 
 /* =========================================================
@@ -154,8 +141,6 @@ export default {
 
       /* =====================================================
          AUTO ROLE
-         -----------------------------------------------------
-         Không để AutoRole lỗi làm dừng MessageCreate.
       ===================================================== */
 
       try {
@@ -204,13 +189,8 @@ export default {
 
 
       /* =====================================================
-         PREFIX COMMANDS
+         PREFIX COMMAND
          -----------------------------------------------------
-         QUAN TRỌNG:
-         Prefix được xử lý TRƯỚC FAQ responder.
-         
-         Cho phép:
-         
          !faq
          !clearuser
          !lyric
@@ -222,24 +202,22 @@ export default {
           client
         );
 
+
       /*
-       * Nếu message là prefix command thì dừng.
+       * Nếu đã xử lý prefix command thì dừng.
        *
-       * Như vậy !faq sẽ không bị faqResponder
-       * xử lý thêm một lần nữa.
+       * Không để FAQ hoặc Leveling xử lý tiếp.
        */
 
       if (wasPrefixCommand) {
-
         return;
-
       }
 
 
       /* =====================================================
          FAQ AUTO RESPONDER
          -----------------------------------------------------
-         Chỉ xử lý tin nhắn thông thường.
+         Chỉ xử lý tin nhắn bình thường.
       ===================================================== */
 
       try {
@@ -315,9 +293,7 @@ async function handleProtectedChannels(message) {
 
 
     if (!member) {
-
       return true;
-
     }
 
 
@@ -453,9 +429,7 @@ async function handleProtectedChannels(message) {
 
     const warn =
       await message.channel.send(
-
         `🚫 ${member} đã bị hạn chế 1 ngày.`
-
       );
 
 
@@ -627,7 +601,7 @@ async function handleCountingGame(
    PREFIX COMMANDS
    ---------------------------------------------------------
    RETURN:
-   
+
    true  = đã xử lý prefix command
    false = không phải prefix command
 ========================================================= */
@@ -676,9 +650,7 @@ async function handlePrefixCommand(
      */
 
     if (!parsed) {
-
       return false;
-
     }
 
 
@@ -689,7 +661,7 @@ async function handlePrefixCommand(
 
 
     /* =====================================================
-       NORMALIZE
+       NORMALIZE COMMAND NAME
     ===================================================== */
 
     const normalizedCommandName =
@@ -701,13 +673,11 @@ async function handlePrefixCommand(
     /* =====================================================
        HARD WHITELIST
        -----------------------------------------------------
-       CHỈ:
-       
+       CHỈ CHO:
+
        !faq
        !clearuser
        !lyric
-       
-       Các command khác bị bỏ qua hoàn toàn.
     ===================================================== */
 
     if (
@@ -716,13 +686,20 @@ async function handlePrefixCommand(
       )
     ) {
 
+      /*
+       * Không báo lỗi.
+       * Không chạy command.
+       */
+
       return true;
 
     }
 
 
     /* =====================================================
-       LYRIC CHANNEL CHECK
+       LYRIC CHANNEL
+       -----------------------------------------------------
+       !lyric chỉ được chạy trong channel chỉ định.
     ===================================================== */
 
     if (
@@ -730,76 +707,44 @@ async function handlePrefixCommand(
     ) {
 
       /*
-       * Nếu chưa cấu hình channel thì báo lỗi trong log
-       * thay vì để command chạy khắp server.
-       */
-
-      if (
-        !LYRIC_CHANNEL_ID ||
-        LYRIC_CHANNEL_ID ===
-          'YOUR_LYRIC_CHANNEL_ID'
-      ) {
-
-        logger.error(
-          '[LYRIC] Chưa cấu hình LYRIC_CHANNEL_ID.'
-        );
-
-        await message.channel.send({
-
-          embeds: [
-
-            createEmbed({
-
-              title:
-                '⚠️ Lyric chưa được cấu hình',
-
-              description:
-                'Admin chưa cấu hình kênh sử dụng lệnh `!lyric`.',
-
-              color:
-                'error',
-
-            }),
-
-          ],
-
-        }).catch(() => {});
-
-
-        return true;
-
-      }
-
-
-      /*
-       * Chỉ cho phép lyric ở đúng channel.
+       * Không còn kiểm tra:
+       *
+       * process.env.LYRIC_CHANNEL_ID
+       *
+       * Không còn báo:
+       *
+       * "Lyric chưa được cấu hình"
+       *
+       * ID được cố định trực tiếp ở đầu file.
        */
 
       if (
         message.channel.id !==
-          LYRIC_CHANNEL_ID
+        LYRIC_CHANNEL_ID
       ) {
 
-        await message.channel.send({
+        await message.channel
+          .send({
 
-          embeds: [
+            embeds: [
 
-            createEmbed({
+              createEmbed({
 
-              title:
-                '🎵 Lệnh Lyric',
+                title:
+                  '🎵 Lệnh Lyric',
 
-              description:
-                `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
+                description:
+                  `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
 
-              color:
-                'info',
+                color:
+                  'info',
 
-            }),
+              }),
 
-          ],
+            ],
 
-        }).catch(() => {});
+          })
+          .catch(() => {});
 
 
         return true;
@@ -825,10 +770,9 @@ async function handlePrefixCommand(
         .toLowerCase();
 
 
-    /*
-     * Không cho alias chuyển sang command
-     * ngoài whitelist.
-     */
+    /* =====================================================
+       KHÔNG CHO ALIAS VƯỢT WHITELIST
+    ===================================================== */
 
     if (
       !ALLOWED_PREFIX_COMMANDS.has(
@@ -837,7 +781,7 @@ async function handlePrefixCommand(
     ) {
 
       logger.warn(
-        `Blocked prefix alias: ${normalizedCommandName} -> ${normalizedResolvedName}`
+        `[PREFIX] Blocked alias: ${normalizedCommandName} -> ${normalizedResolvedName}`
       );
 
       return true;
@@ -862,39 +806,36 @@ async function handlePrefixCommand(
       );
 
 
-      /*
-       * Chỉ báo cho lyric để dễ debug.
-       *
-       * !faq và !clearuser giữ im lặng nếu command
-       * chưa được load.
-       */
-
       if (
         normalizedResolvedName ===
         'lyric'
       ) {
 
-        await message.channel.send({
+        await message.channel
+          .send({
 
-          embeds: [
+            embeds: [
 
-            createEmbed({
+              createEmbed({
 
-              title:
-                '❌ Lyric chưa được load',
+                title:
+                  '❌ Lyric chưa được load',
 
-              description:
-                'Bot không tìm thấy command `lyric` trong `client.commands`.\n' +
-                'Hãy kiểm tra file `commands/lyric.js`.',
+                description:
+                  'Bot không tìm thấy command `lyric` trong `client.commands`.\n\n' +
+                  'Hãy kiểm tra file:\n' +
+                  '`commands/lyric.js`\n\n' +
+                  'Đồng thời kiểm tra log lúc bot khởi động.',
 
-              color:
-                'error',
+                color:
+                  'error',
 
-            }),
+              }),
 
-          ],
+            ],
 
-        }).catch(() => {});
+          })
+          .catch(() => {});
 
       }
 
@@ -921,11 +862,15 @@ async function handlePrefixCommand(
 
 
     if (
+
       !supportsPrefixExecution(
         command
       )
+
       ||
+
       restriction.blocked
+
     ) {
 
       if (
@@ -1107,9 +1052,10 @@ async function handlePrefixCommand(
       error
     );
 
+
     /*
-     * Đây vẫn là prefix command.
-     * Không để FAQ responder xử lý lại.
+     * Nếu đã nhận diện là prefix command,
+     * không cho FAQ responder xử lý lại.
      */
 
     return true;
@@ -1151,9 +1097,7 @@ async function handleLeveling(
 
 
     if (!allowed) {
-
       return;
-
     }
 
 
@@ -1246,7 +1190,8 @@ async function handleLeveling(
 
 
     const last =
-      userData?.lastMessage || 0;
+      userData?.lastMessage ||
+      0;
 
 
     const cooldown =
