@@ -86,7 +86,7 @@ const ALLOWED_PREFIX_COMMANDS = new Set([
 
 const LYRIC_CHANNEL_ID =
   process.env.LYRIC_CHANNEL_ID ||
-  'YOUR_LYRIC_CHANNEL_ID';
+  '1510183614535569448';
 
 
 /* =========================================================
