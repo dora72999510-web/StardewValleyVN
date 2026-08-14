@@ -1,10 +1,9 @@
-```js
+Mình đã đổi như thế này nhưng chưa hiện embed 
 import {
   EmbedBuilder,
   Events,
   PermissionsBitField,
 } from 'discord.js';
-
 import { logger } from '../utils/logger.js';
 
 import {
@@ -51,6 +50,14 @@ import {
 
 /* =========================================================
    PREFIX COMMANDS
+   ---------------------------------------------------------
+   CHỈ CHO PHÉP:
+
+   !faq
+   !clearuser
+   !lyric
+
+   Mọi prefix command khác sẽ bị bỏ qua.
 ========================================================= */
 
 const ALLOWED_PREFIX_COMMANDS = new Set([
@@ -62,21 +69,24 @@ const ALLOWED_PREFIX_COMMANDS = new Set([
 
 /* =========================================================
    LYRIC CONFIG
+   ---------------------------------------------------------
+   QUAN TRỌNG:
+
+   Thay ID bên dưới bằng ID channel bạn muốn dùng.
+
+   Hiện tại đang dùng:
+   1537723665754357780
 ========================================================= */
 
-const LYRIC_CHANNEL_ID =
-  '1537723665754357780';
+const LYRIC_CHANNEL_ID = '1537723665754357780';
 
 
 /* =========================================================
    XP CONFIG
 ========================================================= */
 
-const XP_RATE_LIMIT_ATTEMPTS =
-  12;
-
-const XP_RATE_LIMIT_WINDOW_MS =
-  10000;
+const XP_RATE_LIMIT_ATTEMPTS = 12;
+const XP_RATE_LIMIT_WINDOW_MS = 10000;
 
 
 /* =========================================================
@@ -100,7 +110,6 @@ const EXEMPT_ROLE_IDS = [
 
 /* =========================================================
    PROTECTED TIMEOUT
-   24 HOURS
 ========================================================= */
 
 const PROTECTED_TIMEOUT =
@@ -108,27 +117,13 @@ const PROTECTED_TIMEOUT =
 
 
 /* =========================================================
-   LOG CHANNEL
-========================================================= */
-
-const PROTECTED_LOG_CHANNEL_ID =
-  '1510871300132835368';
-
-
-/* =========================================================
    MESSAGE CREATE
 ========================================================= */
 
 export default {
+  name: Events.MessageCreate,
 
-  name:
-    Events.MessageCreate,
-
-
-  async execute(
-    message,
-    client
-  ) {
+  async execute(message, client) {
 
     try {
 
@@ -140,11 +135,9 @@ export default {
         return;
       }
 
-
       if (!message.guild) {
         return;
       }
-
 
       if (message.author?.bot) {
         return;
@@ -157,9 +150,7 @@ export default {
 
       try {
 
-        await handleAutoRole(
-          message
-        );
+        await handleAutoRole(message);
 
       } catch (error) {
 
@@ -174,16 +165,15 @@ export default {
       /* =====================================================
          PROTECTED CHANNEL
          -----------------------------------------------------
-         Chạy trước Prefix / FAQ / XP.
+         Ưu tiên cao nhất.
       ===================================================== */
 
       if (
-        await handleProtectedChannels(
-          message
-        )
+        await handleProtectedChannels(message)
       ) {
 
         return;
+
       }
 
 
@@ -199,11 +189,16 @@ export default {
       ) {
 
         return;
+
       }
 
 
       /* =====================================================
          PREFIX COMMAND
+         -----------------------------------------------------
+         !faq
+         !clearuser
+         !lyric
       ===================================================== */
 
       const wasPrefixCommand =
@@ -213,6 +208,12 @@ export default {
         );
 
 
+      /*
+       * Nếu đã xử lý prefix command thì dừng.
+       *
+       * Không để FAQ hoặc Leveling xử lý tiếp.
+       */
+
       if (wasPrefixCommand) {
         return;
       }
@@ -220,17 +221,18 @@ export default {
 
       /* =====================================================
          FAQ AUTO RESPONDER
+         -----------------------------------------------------
+         Chỉ xử lý tin nhắn bình thường.
       ===================================================== */
 
       try {
 
         if (
-          await handleFaq(
-            message
-          )
+          await handleFaq(message)
         ) {
 
           return;
+
         }
 
       } catch (error) {
@@ -263,7 +265,6 @@ export default {
     }
 
   },
-
 };
 
 
@@ -271,15 +272,9 @@ export default {
    PROTECTED CHANNELS
 ========================================================= */
 
-async function handleProtectedChannels(
-  message
-) {
+async function handleProtectedChannels(message) {
 
   try {
-
-    /* =====================================================
-       CHECK CHANNEL
-    ===================================================== */
 
     if (
       !PROTECTED_CHANNELS.includes(
@@ -288,13 +283,8 @@ async function handleProtectedChannels(
     ) {
 
       return false;
+
     }
-
-
-    logger.info(
-      `[PROTECTED] Message detected in protected channel: ` +
-      `${message.channel.id} by ${message.author.tag}`
-    );
 
 
     /* =====================================================
@@ -303,42 +293,29 @@ async function handleProtectedChannels(
 
     const member =
       await message.guild.members
-        .fetch(
-          message.author.id
-        )
-        .catch(
-          error => {
-
-            logger.error(
-              `[PROTECTED] Không thể fetch member ${message.author.id}:`,
-              error
-            );
-
-            return null;
-          }
-        );
+        .fetch(message.author.id)
+        .catch(() => null);
 
 
     if (!member) {
-
       return true;
     }
 
 
     /* =====================================================
        BYPASS
-       -----------------------------------------------------
-       Administrator và role exempt không bị xử lý.
-       
-       KHÔNG bypass ManageMessages.
-       Người có ManageMessages vẫn có thể bị timeout
-       nếu không phải Administrator / exempt role.
     ===================================================== */
 
     if (
 
       member.permissions.has(
         PermissionsBitField.Flags.Administrator
+      )
+
+      ||
+
+      member.permissions.has(
+        PermissionsBitField.Flags.ManageMessages
       )
 
       ||
@@ -352,11 +329,8 @@ async function handleProtectedChannels(
 
     ) {
 
-      logger.info(
-        `[PROTECTED] Bypass ${member.user.tag}`
-      );
-
       return true;
+
     }
 
 
@@ -364,76 +338,47 @@ async function handleProtectedChannels(
        DELETE MESSAGE
     ===================================================== */
 
-    try {
+    await message
+      .delete()
+      .catch(() => {});
 
-      await message.delete();
 
-      logger.info(
-        `[PROTECTED] Deleted message from ${member.user.tag}`
-      );
+    /* =====================================================
+       CHECK MODERATABLE
+    ===================================================== */
 
-    } catch (error) {
+    if (!member.moderatable) {
 
       logger.warn(
-        `[PROTECTED] Không thể xóa message của ${member.user.tag}:`,
-        error?.message ||
-        error
+        `Cannot timeout ${member.user.tag} (role hierarchy issue)`
       );
+
+      return true;
 
     }
 
 
     /* =====================================================
-       TIMEOUT CHECK
+       TIMEOUT
     ===================================================== */
 
-    if (!member.moderatable) {
-
-      logger.error(
-        `[PROTECTED] KHÔNG THỂ TIMEOUT ${member.user.tag}. ` +
-        `Kiểm tra quyền Moderate Members và role hierarchy của bot.`
-      );
+    await member.timeout(
+      PROTECTED_TIMEOUT,
+      'Message in protected channel'
+    );
 
 
-    } else {
-
-      /* ===================================================
-         TIMEOUT 24 HOURS
-      =================================================== */
-
-      try {
-
-        await member.timeout(
-          PROTECTED_TIMEOUT,
-          'Message in protected channel'
-        );
-
-
-        logger.warn(
-          `[PROTECTED] Timeout thành công: ` +
-          `${member.user.tag} trong 24 giờ.`
-        );
-
-
-      } catch (error) {
-
-        logger.error(
-          `[PROTECTED] TIMEOUT FAILED cho ${member.user.tag}:`,
-          error
-        );
-
-      }
-
-    }
+    logger.warn(
+      `Timeout applied to ${member.user.tag}`
+    );
 
 
     /* =====================================================
        DM USER
     ===================================================== */
 
-    try {
-
-      await member.send({
+    await member
+      .send({
 
         embeds: [
 
@@ -453,23 +398,8 @@ async function handleProtectedChannels(
 
         ],
 
-      });
-
-
-      logger.info(
-        `[PROTECTED] Đã gửi DM cho ${member.user.tag}`
-      );
-
-
-    } catch (error) {
-
-      logger.warn(
-        `[PROTECTED] Không thể gửi DM cho ${member.user.tag}:`,
-        error?.message ||
-        error
-      );
-
-    }
+      })
+      .catch(() => {});
 
 
     /* =====================================================
@@ -479,108 +409,39 @@ async function handleProtectedChannels(
     const logChannel =
       await message.guild.channels
         .fetch(
-          PROTECTED_LOG_CHANNEL_ID
+          '1510871300132835368'
         )
-        .catch(
-          error => {
-
-            logger.error(
-              `[PROTECTED] Không thể fetch log channel ${PROTECTED_LOG_CHANNEL_ID}:`,
-              error
-            );
-
-            return null;
-          }
-        );
+        .catch(() => null);
 
 
-    if (
-      logChannel?.isTextBased()
-    ) {
+    if (logChannel?.isTextBased()) {
 
-      const embed =
-        new EmbedBuilder()
+  const embed = new EmbedBuilder()
+  .setColor(#f1c40f)
+  .setDescription(
+    `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+    `do gửi nội dung vào <#1521007503263928341>.`
+  );
 
-          .setColor(
-            0xf1c40f
-          )
-
-          .setDescription(
-            `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-            `do gửi nội dung vào <#1521007503263928341>.`
-          );
-
-
-      try {
-
-        await logChannel.send({
-
-          embeds: [
-            embed,
-          ],
-
-        });
-
-
-        logger.info(
-          `[PROTECTED] Đã gửi log embed cho ${member.user.tag}`
-        );
-
-
-      } catch (error) {
-
-        logger.error(
-          '[PROTECTED] Không thể gửi log embed:',
-          error
-        );
-
-      }
-
-    } else {
-
-      logger.warn(
-        `[PROTECTED] Log channel ${PROTECTED_LOG_CHANNEL_ID} ` +
-        `không phải text-based channel hoặc không tồn tại.`
-      );
-
-    }
-
+}
 
     /* =====================================================
        WARNING MESSAGE
     ===================================================== */
 
-    try {
-
-      const warn =
-        await message.channel.send(
-          `🚫 ${member} đã bị hạn chế 1 ngày.`
-        );
-
-
-      setTimeout(
-        () => {
-
-          warn
-            .delete()
-            .catch(
-              () => {}
-            );
-
-        },
-        5000
+    const warn =
+      await message.channel.send(
+        `🚫 ${member} đã bị hạn chế 1 ngày.`
       );
 
 
-    } catch (error) {
-
-      logger.warn(
-        '[PROTECTED] Không thể gửi warning message:',
-        error?.message ||
-        error
-      );
-
-    }
+    setTimeout(
+      () =>
+        warn
+          .delete()
+          .catch(() => {}),
+      5000
+    );
 
 
     return true;
@@ -592,7 +453,6 @@ async function handleProtectedChannels(
       'Protected Channel Error:',
       error
     );
-
 
     return true;
 
@@ -627,6 +487,7 @@ async function handleCountingGame(
     ) {
 
       return false;
+
     }
 
 
@@ -656,9 +517,7 @@ async function handleCountingGame(
 
       await message
         .delete()
-        .catch(
-          () => {}
-        );
+        .catch(() => {});
 
 
       await saveCountingGameConfig(
@@ -698,9 +557,7 @@ async function handleCountingGame(
         () =>
           msg
             .delete()
-            .catch(
-              () => {}
-            ),
+            .catch(() => {}),
         10000
       );
 
@@ -735,7 +592,6 @@ async function handleCountingGame(
       error
     );
 
-
     return false;
 
   }
@@ -745,6 +601,11 @@ async function handleCountingGame(
 
 /* =========================================================
    PREFIX COMMANDS
+   ---------------------------------------------------------
+   RETURN:
+
+   true  = đã xử lý prefix command
+   false = không phải prefix command
 ========================================================= */
 
 async function handlePrefixCommand(
@@ -786,8 +647,11 @@ async function handlePrefixCommand(
       );
 
 
-    if (!parsed) {
+    /*
+     * Không phải prefix command.
+     */
 
+    if (!parsed) {
       return false;
     }
 
@@ -810,6 +674,12 @@ async function handlePrefixCommand(
 
     /* =====================================================
        HARD WHITELIST
+       -----------------------------------------------------
+       CHỈ CHO:
+
+       !faq
+       !clearuser
+       !lyric
     ===================================================== */
 
     if (
@@ -818,18 +688,37 @@ async function handlePrefixCommand(
       )
     ) {
 
+      /*
+       * Không báo lỗi.
+       * Không chạy command.
+       */
+
       return true;
+
     }
 
 
     /* =====================================================
        LYRIC CHANNEL
+       -----------------------------------------------------
+       !lyric chỉ được chạy trong channel chỉ định.
     ===================================================== */
 
     if (
-      normalizedCommandName ===
-      'lyric'
+      normalizedCommandName === 'lyric'
     ) {
+
+      /*
+       * Không còn kiểm tra:
+       *
+       * process.env.LYRIC_CHANNEL_ID
+       *
+       * Không còn báo:
+       *
+       * "Lyric chưa được cấu hình"
+       *
+       * ID được cố định trực tiếp ở đầu file.
+       */
 
       if (
         message.channel.id !==
@@ -857,12 +746,11 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(
-            () => {}
-          );
+          .catch(() => {});
 
 
         return true;
+
       }
 
     }
@@ -895,13 +783,11 @@ async function handlePrefixCommand(
     ) {
 
       logger.warn(
-        `[PREFIX] Blocked alias: ` +
-        `${normalizedCommandName} -> ` +
-        `${normalizedResolvedName}`
+        `[PREFIX] Blocked alias: ${normalizedCommandName} -> ${normalizedResolvedName}`
       );
 
-
       return true;
+
     }
 
 
@@ -918,8 +804,7 @@ async function handlePrefixCommand(
     if (!command) {
 
       logger.warn(
-        `[PREFIX] Command "${resolvedName}" ` +
-        `chưa được load vào client.commands.`
+        `[PREFIX] Command "${resolvedName}" chưa được load vào client.commands.`
       );
 
 
@@ -952,14 +837,13 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(
-            () => {}
-          );
+          .catch(() => {});
 
       }
 
 
       return true;
+
     }
 
 
@@ -1017,14 +901,13 @@ async function handlePrefixCommand(
             ],
 
           })
-          .catch(
-            () => {}
-          );
+          .catch(() => {});
 
       }
 
 
       return true;
+
     }
 
 
@@ -1072,12 +955,11 @@ async function handlePrefixCommand(
           ],
 
         })
-        .catch(
-          () => {}
-        );
+        .catch(() => {});
 
 
       return true;
+
     }
 
 
@@ -1128,12 +1010,11 @@ async function handlePrefixCommand(
           ],
 
         })
-        .catch(
-          () => {}
-        );
+        .catch(() => {});
 
 
       return true;
+
     }
 
 
@@ -1159,8 +1040,7 @@ async function handlePrefixCommand(
 
 
     logger.info(
-      `[PREFIX] ${message.author.tag} ` +
-      `used ${prefix}${resolvedName}`
+      `[PREFIX] ${message.author.tag} used ${prefix}${resolvedName}`
     );
 
 
@@ -1174,6 +1054,11 @@ async function handlePrefixCommand(
       error
     );
 
+
+    /*
+     * Nếu đã nhận diện là prefix command,
+     * không cho FAQ responder xử lý lại.
+     */
 
     return true;
 
@@ -1194,8 +1079,7 @@ async function handleLeveling(
   try {
 
     const key =
-      `xp:${message.guild.id}:` +
-      `${message.author.id}`;
+      `xp:${message.guild.id}:${message.author.id}`;
 
 
     /* =====================================================
@@ -1215,7 +1099,6 @@ async function handleLeveling(
 
 
     if (!allowed) {
-
       return;
     }
 
@@ -1236,6 +1119,7 @@ async function handleLeveling(
     ) {
 
       return;
+
     }
 
 
@@ -1250,6 +1134,7 @@ async function handleLeveling(
     ) {
 
       return;
+
     }
 
 
@@ -1264,6 +1149,7 @@ async function handleLeveling(
     ) {
 
       return;
+
     }
 
 
@@ -1285,6 +1171,7 @@ async function handleLeveling(
     ) {
 
       return;
+
     }
 
 
@@ -1322,6 +1209,7 @@ async function handleLeveling(
     ) {
 
       return;
+
     }
 
 
@@ -1392,12 +1280,3 @@ async function handleLeveling(
   }
 
 }
-```
-
-Sau khi thay file này, **restart bot** rồi thử một tài khoản không có Administrator và không có 2 role exempt gửi tin vào `1521007503263928341`.
-
-Nếu vẫn không timeout, log mới sẽ chỉ ra nguyên nhân ở dòng:
-
-`[PROTECTED] KHÔNG THỂ TIMEOUT...` hoặc `TIMEOUT FAILED...`
-
-Khi đó gửi mình **đoạn log đó**, mình sẽ xác định chính xác phần quyền Discord hay role hierarchy đang bị vướng.
