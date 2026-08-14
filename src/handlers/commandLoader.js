@@ -30,7 +30,7 @@ const COMMAND_COUNT_WARN_THRESHOLD = 90;
  */
 
 const DEVELOPER_COMMAND = {
-    name: 'nha phat trien',
+    name: 'nha-phat-trien',
 
     description: 'honganhrose',
 
