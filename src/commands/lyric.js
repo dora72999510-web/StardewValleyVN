@@ -121,7 +121,6 @@ const command = {
 
       if (
         LYRIC_CHANNEL_ID &&
-        LYRIC_CHANNEL_ID !== '1510183614535569448' &&
         message.channel.id !== LYRIC_CHANNEL_ID
       ) {
 
