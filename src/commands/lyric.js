@@ -1,43 +1,35 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { EmbedBuilder } from 'discord.js';
 
 /* =========================================================
    CONFIG
 ========================================================= */
 
 /*
- * ĐẶT ID KÊNH ĐƯỢC PHÉP DÙNG !lyric Ở ĐÂY.
+ * Chỉ cho phép !lyric trong channel này.
  *
- * Ví dụ:
- *
- * const LYRIC_CHANNEL_ID = '123456789012345678';
- *
- * Chỉ người dùng gửi !lyric trong kênh này
- * mới được bot xử lý.
+ * Nếu muốn đổi channel:
+ * thay ID bên dưới bằng ID channel Discord.
  */
-const LYRIC_CHANNEL_ID = '1510183614535569448';
+const LYRIC_CHANNEL_ID =
+  process.env.LYRIC_CHANNEL_ID ||
+  '1510183614535569448';
 
 
 /*
- * API lyrics công khai.
- *
- * Endpoint:
- * https://api.lyrics.ovh/v1/{artist}/{title}
- *
- * API này trả về lyrics của bài hát nếu tìm được.
+ * Lyrics API công khai.
  */
-const LYRIC_API_BASE = 'https://api.lyrics.ovh/v1';
+const LYRIC_API_BASE =
+  'https://api.lyrics.ovh/v1';
 
 
 /*
- * Giới hạn phần trích dẫn hiển thị trong Discord.
- *
- * Không sử dụng giá trị này để gửi toàn bộ lyrics.
+ * Độ dài đoạn lyrics tối đa hiển thị.
  */
 const MAX_EXCERPT_LENGTH = 220;
 
 
 /*
- * Thời gian timeout cho request API.
+ * Timeout API.
  */
 const API_TIMEOUT_MS = 10000;
 
@@ -49,26 +41,18 @@ const API_TIMEOUT_MS = 10000;
 const command = {
 
   /*
-   * Giữ data để tương thích với hệ thống loadCommands()
-   * hiện tại của bạn.
+   * Tên command để client.commands nhận diện.
    *
-   * Prefix command thực tế vẫn là:
-   *
-   * !lyric <tên bài hát>
+   * !lyric
    */
-  data: new SlashCommandBuilder()
-    .setName('lyric')
-    .setDescription('Tìm thông tin và trích đoạn lời bài hát.')
-    .addStringOption(option =>
-      option
-        .setName('song')
-        .setDescription('Tên bài hát cần tìm')
-        .setRequired(true)
-    ),
+  data: {
+    name: 'lyric',
+    description: 'Tìm lyrics bài hát',
+  },
 
 
   /*
-   * Cho phép hệ thống prefix nhận command này.
+   * Cho phép chạy bằng prefix.
    */
   prefix: true,
 
@@ -79,23 +63,17 @@ const command = {
   category: 'music',
 
 
-  /*
-   * =======================================================
-   * EXECUTE
-   * =======================================================
-   *
-   * Hỗ trợ cách gọi thông thường của hệ thống prefix:
-   *
-   * execute(message, args, client)
-   *
-   */
+  /* =======================================================
+     EXECUTE
+  ======================================================= */
+
   async execute(message, args, client) {
 
     try {
 
-      /* ===================================================
-         BASIC VALIDATION
-      =================================================== */
+      /* =====================================================
+         BASIC CHECK
+      ===================================================== */
 
       if (!message) {
         return;
@@ -107,171 +85,192 @@ const command = {
       }
 
 
-      /*
-       * Không cho phép bot tự xử lý message của bot.
-       */
       if (message.author?.bot) {
         return;
       }
 
 
-      /* ===================================================
-         CHANNEL RESTRICTION
-      =================================================== */
+      /* =====================================================
+         CHANNEL CHECK
+      ===================================================== */
 
       if (
         LYRIC_CHANNEL_ID &&
         message.channel.id !== LYRIC_CHANNEL_ID
       ) {
 
-        await message.reply({
-          embeds: [
-            createEmbed({
-              title: '🎵 Lệnh Lyric',
-              description:
-                `Lệnh \`!lyric\` chỉ được sử dụng trong <#${LYRIC_CHANNEL_ID}>.`,
-              color: 'info',
-            }),
-          ],
-        }).catch(() => {});
+        await sendEmbed(
+          message,
+          {
+            title: '🎵 Lệnh Lyric',
+            description:
+              `Bạn chỉ có thể sử dụng \`!lyric\` tại <#${LYRIC_CHANNEL_ID}>.`,
+            color: 'info',
+          }
+        );
 
         return;
       }
 
 
-      /* ===================================================
-         GET SONG NAME
-      =================================================== */
+      /* =====================================================
+         GET SONG QUERY
+         -----------------------------------------------------
+         Đây là phần quan trọng nhất.
+
+         Hệ thống prefix của bạn có thể truyền args dưới
+         nhiều dạng khác nhau.
+
+         Ví dụ:
+
+         ['Shape', 'of', 'You']
+
+         hoặc:
+
+         {
+           song: 'Shape of You'
+         }
+
+         hoặc:
+
+         'Shape of You'
+
+         Code dưới đây xử lý cả 3.
+      ===================================================== */
 
       const songName =
-        Array.isArray(args)
-          ? args.join(' ').trim()
-          : String(args || '').trim();
+        normalizeArguments(args);
 
+
+      console.log(
+        '[LYRIC] Raw args:',
+        args
+      );
+
+      console.log(
+        '[LYRIC] Normalized query:',
+        songName
+      );
+
+
+      /* =====================================================
+         EMPTY QUERY
+      ===================================================== */
 
       if (!songName) {
 
-        await message.reply({
-          embeds: [
-            createEmbed({
-              title: '🎵 Lyric',
-              description:
-                'Vui lòng nhập tên bài hát.\n\n' +
-                '**Ví dụ:**\n' +
-                '`!lyric Shape of You`',
-              color: 'info',
-            }),
-          ],
-        }).catch(() => {});
+        await sendEmbed(
+          message,
+          {
+            title: '🎵 Lyric',
+            description:
+              'Vui lòng nhập tên bài hát.\n\n' +
+              '**Ví dụ:**\n' +
+              '`!lyric Shape of You`\n' +
+              '`!lyric Ed Sheeran Shape of You`',
+            color: 'info',
+          }
+        );
 
         return;
       }
 
 
-      /*
-       * Giới hạn input để tránh request quá dài.
-       */
-      if (songName.length > 200) {
+      /* =====================================================
+         MAX LENGTH
+      ===================================================== */
 
-        await message.reply({
-          embeds: [
-            createEmbed({
-              title: '❌ Tên bài hát quá dài',
-              description:
-                'Vui lòng nhập tên bài hát ngắn hơn 200 ký tự.',
-              color: 'error',
-            }),
-          ],
-        }).catch(() => {});
+      if (
+        songName.length > 200
+      ) {
+
+        await sendEmbed(
+          message,
+          {
+            title: '❌ Tên bài hát quá dài',
+            description:
+              'Vui lòng nhập tên bài hát ngắn hơn 200 ký tự.',
+            color: 'error',
+          }
+        );
 
         return;
       }
 
 
-      /* ===================================================
+      /* =====================================================
          SEARCH MESSAGE
-      =================================================== */
+      ===================================================== */
 
       const searchingMessage =
-        await message.reply({
-          embeds: [
-            createEmbed({
-              title: '🔎 Đang tìm bài hát...',
-              description:
-                `Đang tìm lyrics cho **${escapeMarkdown(songName)}**...`,
-              color: 'info',
-            }),
-          ],
-        }).catch(() => null);
+        await sendEmbed(
+          message,
+          {
+            title: '🔎 Đang tìm bài hát...',
+            description:
+              `Đang tìm lyrics cho **${escapeMarkdown(songName)}**...`,
+            color: 'info',
+          }
+        );
 
 
-      /* ===================================================
-         SEARCH API
-      =================================================== */
-
-      /*
-       * lyrics.ovh cần artist + title.
-       *
-       * Vì !lyric chỉ nhận một chuỗi:
-       *
-       * !lyric Shape of You
-       *
-       * ta thử nhiều chiến lược.
-       */
+      /* =====================================================
+         SEARCH
+      ===================================================== */
 
       const result =
         await findLyrics(songName);
 
 
-      /* ===================================================
+      /* =====================================================
          NOT FOUND
-      =================================================== */
+      ===================================================== */
 
       if (!result) {
 
-        const payload = {
-          embeds: [
-            createEmbed({
-              title: '❌ Không tìm thấy bài hát',
-              description:
-                `Không tìm thấy lyrics cho **${escapeMarkdown(songName)}**.\n\n` +
-                'Bạn có thể thử nhập cả **tên ca sĩ + tên bài hát**.\n\n' +
-                '**Ví dụ:**\n' +
-                '`!lyric Ed Sheeran Shape of You`',
-              color: 'error',
-            }),
-          ],
-        };
+        const payload =
+          createEmbedPayload({
+            title:
+              '❌ Không tìm thấy bài hát',
+
+            description:
+              `Không tìm thấy lyrics cho **${escapeMarkdown(songName)}**.\n\n` +
+              'Bạn có thể thử nhập cả **tên ca sĩ + tên bài hát**.\n\n' +
+              '**Ví dụ:**\n' +
+              '`!lyric Ed Sheeran Shape of You`',
+
+            color:
+              'error',
+          });
 
 
         if (searchingMessage) {
 
-          await searchingMessage.edit(
-            payload
-          ).catch(async () => {
+          await searchingMessage
+            .edit(payload)
+            .catch(async () => {
 
-            await message.channel.send(
-              payload
-            ).catch(() => {});
+              await message.channel
+                .send(payload)
+                .catch(() => {});
 
-          });
+            });
 
         } else {
 
-          await message.channel.send(
-            payload
-          ).catch(() => {});
+          await message.channel
+            .send(payload)
+            .catch(() => {});
 
         }
-
 
         return;
       }
 
 
-      /* ===================================================
+      /* =====================================================
          CREATE EXCERPT
-      =================================================== */
+      ===================================================== */
 
       const excerpt =
         createExcerpt(
@@ -279,9 +278,9 @@ const command = {
         );
 
 
-      /* ===================================================
-         RESPONSE
-      =================================================== */
+      /* =====================================================
+         RESULT EMBED
+      ===================================================== */
 
       const embed =
         new EmbedBuilder()
@@ -289,49 +288,64 @@ const command = {
           .setDescription(
             [
               `**${escapeMarkdown(result.title)}**`,
+
               result.artist
                 ? `👤 **${escapeMarkdown(result.artist)}**`
                 : null,
+
               '',
+
               '📖 **Trích đoạn:**',
-              excerpt || 'Không có nội dung trích đoạn.',
+
+              excerpt ||
+                'Không có nội dung trích đoạn.',
+
               '',
-              '⚠️ Đây chỉ là một đoạn trích ngắn. Không hiển thị toàn bộ lời bài hát.',
+
+              '⚠️ Đây chỉ là một đoạn trích ngắn.',
             ]
               .filter(Boolean)
               .join('\n')
           )
+          .setColor(0x3498db)
           .setTimestamp();
 
 
       const payload = {
-        embeds: [embed],
+        embeds: [
+          embed,
+        ],
       };
 
 
-      /* ===================================================
+      /* =====================================================
          EDIT SEARCH MESSAGE
-      =================================================== */
+      ===================================================== */
 
       if (searchingMessage) {
 
-        await searchingMessage.edit(
-          payload
-        ).catch(async () => {
+        await searchingMessage
+          .edit(payload)
+          .catch(async () => {
 
-          await message.channel.send(
-            payload
-          ).catch(() => {});
+            await message.channel
+              .send(payload)
+              .catch(() => {});
 
-        });
+          });
 
       } else {
 
-        await message.channel.send(
-          payload
-        ).catch(() => {});
+        await message.channel
+          .send(payload)
+          .catch(() => {});
 
       }
+
+
+      console.log(
+        `[LYRIC] Success: ${result.artist || 'Unknown'} - ${result.title}`
+      );
 
 
     } catch (error) {
@@ -342,16 +356,19 @@ const command = {
       );
 
 
-      await message.reply({
-        embeds: [
-          createEmbed({
-            title: '❌ Có lỗi xảy ra',
-            description:
-              'Không thể tìm lyrics lúc này. Vui lòng thử lại sau.',
-            color: 'error',
-          }),
-        ],
-      }).catch(() => {});
+      await sendEmbed(
+        message,
+        {
+          title:
+            '❌ Có lỗi xảy ra',
+
+          description:
+            'Không thể tìm lyrics lúc này. Vui lòng thử lại sau.',
+
+          color:
+            'error',
+        }
+      );
 
     }
 
@@ -361,15 +378,270 @@ const command = {
 
 
 /* =========================================================
+   NORMALIZE ARGUMENTS
+   ---------------------------------------------------------
+   FIX [object Object]
+========================================================= */
+
+function normalizeArguments(args) {
+
+  /* -------------------------------------------------------
+     NULL / UNDEFINED
+  ------------------------------------------------------- */
+
+  if (
+    args === null ||
+    args === undefined
+  ) {
+
+    return '';
+
+  }
+
+
+  /* -------------------------------------------------------
+     STRING
+  ------------------------------------------------------- */
+
+  if (
+    typeof args === 'string'
+  ) {
+
+    return cleanQuery(args);
+
+  }
+
+
+  /* -------------------------------------------------------
+     ARRAY
+  ------------------------------------------------------- */
+
+  if (
+    Array.isArray(args)
+  ) {
+
+    return cleanQuery(
+      args
+        .map(value => {
+
+          if (
+            value === null ||
+            value === undefined
+          ) {
+
+            return '';
+
+          }
+
+
+          if (
+            typeof value === 'string'
+          ) {
+
+            return value;
+
+          }
+
+
+          if (
+            typeof value === 'number'
+          ) {
+
+            return String(value);
+
+          }
+
+
+          /*
+           * Nếu phần tử là object,
+           * cố lấy các field thường gặp.
+           */
+
+          if (
+            typeof value === 'object'
+          ) {
+
+            return extractObjectText(
+              value
+            );
+
+          }
+
+
+          return '';
+
+        })
+        .filter(Boolean)
+        .join(' ')
+    );
+
+  }
+
+
+  /* -------------------------------------------------------
+     OBJECT
+  ------------------------------------------------------- */
+
+  if (
+    typeof args === 'object'
+  ) {
+
+    return cleanQuery(
+      extractObjectText(args)
+    );
+
+  }
+
+
+  /* -------------------------------------------------------
+     OTHER
+  ------------------------------------------------------- */
+
+  return cleanQuery(
+    String(args)
+  );
+
+}
+
+
+/* =========================================================
+   EXTRACT OBJECT TEXT
+========================================================= */
+
+function extractObjectText(value) {
+
+  if (
+    !value ||
+    typeof value !== 'object'
+  ) {
+
+    return '';
+
+  }
+
+
+  /*
+   * Các property phổ biến của hệ thống command.
+   */
+  const preferredKeys = [
+    'song',
+    'query',
+    'search',
+    'title',
+    'name',
+    'value',
+    'content',
+    'text',
+  ];
+
+
+  for (
+    const key
+    of preferredKeys
+  ) {
+
+    const current =
+      value[key];
+
+
+    if (
+      typeof current === 'string' &&
+      current.trim()
+    ) {
+
+      return current.trim();
+
+    }
+
+  }
+
+
+  /*
+   * Nếu object có args / arguments.
+   */
+  if (
+    Array.isArray(value.args)
+  ) {
+
+    return value.args
+      .map(item =>
+        typeof item === 'string'
+          ? item
+          : extractObjectText(item)
+      )
+      .filter(Boolean)
+      .join(' ');
+
+  }
+
+
+  if (
+    Array.isArray(value.arguments)
+  ) {
+
+    return value.arguments
+      .map(item =>
+        typeof item === 'string'
+          ? item
+          : extractObjectText(item)
+      )
+      .filter(Boolean)
+      .join(' ');
+
+  }
+
+
+  /*
+   * Cuối cùng thử lấy toàn bộ giá trị string.
+   */
+  const strings =
+    Object.values(value)
+      .filter(
+        item =>
+          typeof item === 'string' &&
+          item.trim()
+      )
+      .map(
+        item =>
+          item.trim()
+      );
+
+
+  if (
+    strings.length > 0
+  ) {
+
+    return strings.join(' ');
+
+  }
+
+
+  return '';
+
+}
+
+
+/* =========================================================
+   CLEAN QUERY
+========================================================= */
+
+function cleanQuery(value) {
+
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+}
+
+
+/* =========================================================
    FIND LYRICS
 ========================================================= */
 
 async function findLyrics(query) {
 
   const cleaned =
-    query
-      .replace(/\s+/g, ' ')
-      .trim();
+    cleanQuery(query);
 
 
   if (!cleaned) {
@@ -377,17 +649,10 @@ async function findLyrics(query) {
   }
 
 
-  /*
-   * =======================================================
-   * STRATEGY 1
-   * =======================================================
-   *
-   * Nếu người dùng nhập:
-   *
-   * Artist - Song
-   *
-   * thì tách trực tiếp.
-   */
+  /* =======================================================
+     STRATEGY 1
+     Artist - Title
+  ======================================================= */
 
   const dashMatch =
     cleaned.match(
@@ -404,19 +669,19 @@ async function findLyrics(query) {
       dashMatch[2].trim();
 
 
-    const result =
+    const lyrics =
       await requestLyrics(
         artist,
         title
       );
 
 
-    if (result) {
+    if (lyrics) {
 
       return {
         artist,
         title,
-        lyrics: result,
+        lyrics,
       };
 
     }
@@ -424,48 +689,35 @@ async function findLyrics(query) {
   }
 
 
-  /*
-   * =======================================================
-   * STRATEGY 2
-   * =======================================================
-   *
-   * Thử tách từ cuối:
-   *
-   * !lyric Ed Sheeran Shape of You
-   *
-   * Các artist/title không có cấu trúc cố định nên ta
-   * thử nhiều điểm tách khác nhau.
-   */
+  /* =======================================================
+     STRATEGY 2
+     Artist + Title
+  ======================================================= */
 
   const words =
-    cleaned.split(' ');
+    cleaned.split(/\s+/);
 
 
-  /*
-   * Chỉ thử nếu có ít nhất 2 từ.
-   */
-  if (words.length >= 2) {
+  if (
+    words.length >= 2
+  ) {
 
     /*
-     * Thử các điểm chia từ phải sang trái.
+     * Thử tối đa 6 cách chia.
      *
      * Ví dụ:
      *
      * Ed Sheeran Shape of You
      *
-     * sẽ thử:
-     *
      * Ed | Sheeran Shape of You
      * Ed Sheeran | Shape of You
-     * Ed Sheeran Shape | of You
-     *
      * ...
      */
 
     const maxAttempts =
       Math.min(
         words.length - 1,
-        5
+        6
       );
 
 
@@ -487,19 +739,19 @@ async function findLyrics(query) {
           .join(' ');
 
 
-      const result =
+      const lyrics =
         await requestLyrics(
           artist,
           title
         );
 
 
-      if (result) {
+      if (lyrics) {
 
         return {
           artist,
           title,
-          lyrics: result,
+          lyrics,
         };
 
       }
@@ -510,36 +762,14 @@ async function findLyrics(query) {
 
 
   /*
-   * =======================================================
-   * STRATEGY 3
-   * =======================================================
+   * API lyrics.ovh không hỗ trợ tìm kiếm theo title
+   * một cách đáng tin cậy.
    *
-   * Một số API/source có thể nhận:
-   *
-   * artist = Unknown
-   *
-   * nên thử dùng toàn bộ query làm title.
+   * Vì vậy nếu không có artist + title thì trả null.
    */
 
-  const result =
-    await requestLyrics(
-      '',
-      cleaned
-    );
-
-
-  if (result) {
-
-    return {
-      artist: '',
-      title: cleaned,
-      lyrics: result,
-    };
-
-  }
-
-
   return null;
+
 }
 
 
@@ -552,28 +782,32 @@ async function requestLyrics(
   title
 ) {
 
-  /*
-   * API yêu cầu title.
-   */
   if (!title) {
     return null;
   }
 
 
-  const encodedArtist =
-    encodeURIComponent(
+  const safeArtist =
+    cleanQuery(
       artist || 'unknown'
     );
 
 
-  const encodedTitle =
-    encodeURIComponent(
+  const safeTitle =
+    cleanQuery(
       title
     );
 
 
+  if (!safeTitle) {
+    return null;
+  }
+
+
   const url =
-    `${LYRIC_API_BASE}/${encodedArtist}/${encodedTitle}`;
+    `${LYRIC_API_BASE}/` +
+    `${encodeURIComponent(safeArtist)}/` +
+    `${encodeURIComponent(safeTitle)}`;
 
 
   const controller =
@@ -582,8 +816,7 @@ async function requestLyrics(
 
   const timeout =
     setTimeout(
-      () =>
-        controller.abort(),
+      () => controller.abort(),
       API_TIMEOUT_MS
     );
 
@@ -595,19 +828,24 @@ async function requestLyrics(
         url,
         {
           method: 'GET',
+
           headers: {
             Accept:
               'application/json',
+
             'User-Agent':
               'TitanBot/1.0',
           },
+
           signal:
             controller.signal,
         }
       );
 
 
-    if (!response.ok) {
+    if (
+      !response.ok
+    ) {
 
       return null;
 
@@ -644,9 +882,6 @@ async function requestLyrics(
 
   } catch (error) {
 
-    /*
-     * AbortError = API timeout.
-     */
     if (
       error?.name ===
       'AbortError'
@@ -660,7 +895,8 @@ async function requestLyrics(
 
       console.warn(
         '[LYRIC] API request failed:',
-        error?.message || error
+        error?.message ||
+        error
       );
 
     }
@@ -688,21 +924,23 @@ function cleanLyrics(lyrics) {
 
   return String(lyrics)
 
-    /*
-     * Normalize Windows line endings.
-     */
-    .replace(/\r\n/g, '\n')
+    .replace(
+      /\r\n/g,
+      '\n'
+    )
 
-    /*
-     * Remove excessive blank lines.
-     */
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(
+      /\n{3,}/g,
+      '\n\n'
+    )
 
-    /*
-     * Remove spaces at line ends.
-     */
     .split('\n')
-    .map(line => line.trimEnd())
+
+    .map(
+      line =>
+        line.trimEnd()
+    )
+
     .join('\n')
 
     .trim();
@@ -711,7 +949,7 @@ function cleanLyrics(lyrics) {
 
 
 /* =========================================================
-   CREATE SHORT EXCERPT
+   CREATE EXCERPT
 ========================================================= */
 
 function createExcerpt(lyrics) {
@@ -722,14 +960,9 @@ function createExcerpt(lyrics) {
 
 
   const cleaned =
-    cleanLyrics(
-      lyrics
-    );
+    cleanLyrics(lyrics);
 
 
-  /*
-   * Lấy một đoạn ngắn ở đầu lyrics.
-   */
   let excerpt =
     cleaned.slice(
       0,
@@ -737,18 +970,13 @@ function createExcerpt(lyrics) {
     );
 
 
-  /*
-   * Không cắt giữa một từ.
-   */
   if (
     cleaned.length >
     MAX_EXCERPT_LENGTH
   ) {
 
     const lastSpace =
-      excerpt.lastIndexOf(
-        ' '
-      );
+      excerpt.lastIndexOf(' ');
 
 
     if (
@@ -764,15 +992,11 @@ function createExcerpt(lyrics) {
     }
 
 
-    excerpt +=
-      '…';
+    excerpt += '…';
 
   }
 
 
-  /*
-   * Escape Discord markdown cơ bản.
-   */
   return escapeMarkdown(
     excerpt
   );
@@ -788,24 +1012,44 @@ function escapeMarkdown(text) {
 
   return String(text)
 
-    .replace(/\\/g, '\\\\')
-    .replace(/\*/g, '\\*')
-    .replace(/_/g, '\\_')
-    .replace(/~/g, '\\~')
-    .replace(/`/g, '\\`')
-    .replace(/>/g, '\\>');
+    .replace(
+      /\\/g,
+      '\\\\'
+    )
+
+    .replace(
+      /\*/g,
+      '\\*'
+    )
+
+    .replace(
+      /_/g,
+      '\\_'
+    )
+
+    .replace(
+      /~/g,
+      '\\~'
+    )
+
+    .replace(
+      /`/g,
+      '\\`'
+    )
+
+    .replace(
+      />/g,
+      '\\>'
+    );
 
 }
 
 
 /* =========================================================
-   CREATE EMBED
-   ---------------------------------------------------------
-   Không phụ thuộc vào createEmbed() của project để file
-   này có thể copy trực tiếp.
+   EMBED
 ========================================================= */
 
-function createEmbed({
+function createEmbedPayload({
   title,
   description,
   color = 'info',
@@ -828,14 +1072,54 @@ function createEmbed({
   };
 
 
-  return new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(description)
-    .setColor(
-      colors[color] ??
-      colors.info
+  return {
+
+    embeds: [
+
+      new EmbedBuilder()
+
+        .setTitle(title)
+
+        .setDescription(
+          description
+        )
+
+        .setColor(
+          colors[color] ??
+          colors.info
+        )
+
+        .setTimestamp(),
+
+    ],
+
+  };
+
+}
+
+
+/* =========================================================
+   SEND EMBED
+========================================================= */
+
+async function sendEmbed(
+  message,
+  {
+    title,
+    description,
+    color = 'info',
+  }
+) {
+
+  return message.channel
+    .send(
+      createEmbedPayload({
+        title,
+        description,
+        color,
+      })
     )
-    .setTimestamp();
+    .catch(() => null);
 
 }
 
