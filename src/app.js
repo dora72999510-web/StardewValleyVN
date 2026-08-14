@@ -1,1503 +1,1694 @@
+import 'dotenv/config';
+
 import {
-  EmbedBuilder,
-  SlashCommandBuilder,
+  Client,
+  Collection,
+  GatewayIntentBits,
+  Routes,
 } from 'discord.js';
 
-import { logger } from '../utils/logger.js';
+import { REST } from '@discordjs/rest';
+import express from 'express';
+import cron from 'node-cron';
 
-/* =========================================================
-   CONFIG
-========================================================= */
+import config from './config/application.js';
 
-/*
- * Có thể cấu hình bằng:
- *
- * LYRIC_CHANNEL_ID=123456789012345678
- *
- * Nếu không cấu hình:
- * - !lyric vẫn hoạt động ở mọi kênh.
- *
- * Điều này tránh tình trạng bot luôn báo:
- * "Lyric chưa được cấu hình"
- *
- * Nếu bạn MUỐN bắt buộc chỉ một kênh,
- * hãy đặt LYRIC_CHANNEL_ID trong .env.
- */
+import { initializeDatabase } from './utils/database.js';
 
-const LYRIC_CHANNEL_ID =
-  String(
-    process.env.LYRIC_CHANNEL_ID || ''
-  ).trim();
+import {
+  getServerCounters,
+  saveServerCounters,
+  updateCounter,
+} from './services/serverstatsService.js';
 
+import {
+  logger,
+  startupLog,
+  shutdownLog,
+} from './utils/logger.js';
 
-/*
- * LRCLIB API
- */
+import { checkBirthdays } from './services/birthdayService.js';
+import { checkGiveaways } from './services/giveawayService.js';
 
-const LYRICS_API_URL =
-  'https://lrclib.net/api/search';
+import { loadCommands } from './handlers/commandLoader.js';
 
+import pkg from '../package.json' with { type: 'json' };
 
-/*
- * Timeout API.
- */
-
-const API_TIMEOUT_MS = 10000;
-
-
-/*
- * Discord embed description:
- * tối đa 4096 ký tự.
- *
- * Dùng 3800 để chừa khoảng an toàn.
- */
-
-const MAX_LYRICS_LENGTH = 3800;
-
-
-/*
- * Không gửi quá nhiều message.
- */
-
-const MAX_LYRICS_PAGES = 10;
+import {
+  EXPECTED_SCHEMA_VERSION,
+  EXPECTED_SCHEMA_LABEL,
+} from './config/schemaVersion.js';
 
 
 /* =========================================================
-   COMMAND
+   BOT
 ========================================================= */
 
-const command = {
+class TitanBot extends Client {
 
-  /*
-   * Prefix command:
-   *
-   * !lyric Shape of You
-   */
+  constructor() {
 
-  name: 'lyric',
+    super({
 
-  category: 'music',
+      intents: [
 
-  description:
-    'Tìm lời bài hát',
+        GatewayIntentBits.Guilds,
 
-  /*
-   * Cho messageAdapter biết đây là
-   * prefix command hợp lệ.
-   */
+        GatewayIntentBits.GuildMembers,
 
-  prefix: true,
+        GatewayIntentBits.GuildMessages,
 
-  /*
-   * Slash command data.
-   */
+        GatewayIntentBits.GuildMessageReactions,
 
-  data:
-    new SlashCommandBuilder()
-      .setName('lyric')
-      .setDescription(
-        'Tìm lời bài hát'
-      )
-      .addStringOption(
-        option =>
-          option
-            .setName('song')
-            .setDescription(
-              'Tên bài hát hoặc ca sĩ + tên bài hát'
-            )
-            .setRequired(true)
-      ),
+        /*
+         * QUAN TRỌNG
+         *
+         * Bắt buộc để bot đọc:
+         *
+         * !faq
+         * !clearuser
+         * !lyric
+         */
+        GatewayIntentBits.MessageContent,
+
+        GatewayIntentBits.DirectMessages,
+
+        GatewayIntentBits.GuildVoiceStates,
+
+        GatewayIntentBits.GuildBans,
+
+      ],
+
+    });
 
 
-  /* =======================================================
-     EXECUTE
-  ======================================================= */
+    /* =====================================================
+       CONFIG
+    ===================================================== */
 
-  async execute(
-    message,
-    args,
-    client
-  ) {
+    this.config = config;
+
+
+    /* =====================================================
+       COLLECTIONS
+    ===================================================== */
+
+    /*
+     * client.commands vẫn được sử dụng cho Prefix Commands.
+     *
+     * Ví dụ:
+     *
+     * !faq
+     * !clearuser
+     * !lyric
+     */
+
+    this.commands =
+      new Collection();
+
+
+    this.events =
+      new Collection();
+
+
+    this.buttons =
+      new Collection();
+
+
+    this.selectMenus =
+      new Collection();
+
+
+    this.modals =
+      new Collection();
+
+
+    this.cooldowns =
+      new Collection();
+
+
+    /* =====================================================
+       DATABASE
+    ===================================================== */
+
+    this.db = null;
+
+
+    /* =====================================================
+       REST
+       -----------------------------------------------------
+       CHỈ dùng để xóa Slash Commands cũ.
+       KHÔNG dùng để đăng ký Slash Commands.
+    ===================================================== */
+
+    this.rest =
+      new REST({
+        version: '10',
+      }).setToken(
+        config.bot.token
+      );
+
+  }
+
+
+  /* =========================================================
+     START BOT
+  ========================================================= */
+
+  async start() {
 
     try {
 
-      /*
-       * ---------------------------------------------------
-       * VALIDATE
-       * ---------------------------------------------------
-       */
-
-      if (!message) {
-
-        logger.warn(
-          '[LYRIC] Message không tồn tại.'
-        );
-
-        return;
-      }
-
-
-      if (!message.channel) {
-
-        logger.warn(
-          '[LYRIC] Message không có channel.'
-        );
-
-        return;
-      }
-
-
-      /*
-       * ---------------------------------------------------
-       * CHANNEL
-       * ---------------------------------------------------
-       *
-       * Nếu có LYRIC_CHANNEL_ID:
-       * chỉ cho phép tại channel đó.
-       *
-       * Nếu không có:
-       * cho phép mọi channel.
-       */
-
-      if (
-        LYRIC_CHANNEL_ID &&
-        message.channel.id !==
-          LYRIC_CHANNEL_ID
-      ) {
-
-        await sendEmbed(
-          message,
-          {
-            title:
-              '🎵 Sai kênh sử dụng',
-
-            description:
-              [
-                'Lệnh `!lyric` chỉ được sử dụng tại:',
-                '',
-                `<#${LYRIC_CHANNEL_ID}>`,
-              ].join('\n'),
-
-            color:
-              0xffa500,
-          }
-        );
-
-        return;
-      }
-
-
-      /*
-       * ---------------------------------------------------
-       * QUERY
-       * ---------------------------------------------------
-       */
-
-      const query =
-        normalizeLyricsQuery(
-          args
-        );
-
-
-      logger.info(
-        `[LYRIC] Query: "${query}"`
+      startupLog(
+        'Starting TitanBot...'
       );
 
 
-      /*
-       * ---------------------------------------------------
-       * EMPTY QUERY
-       * ---------------------------------------------------
-       */
-
-      if (!query) {
-
-        await sendEmbed(
-          message,
-          {
-            title:
-              '🎵 Cách sử dụng !lyric',
-
-            description:
-              [
-                'Bạn chưa nhập tên bài hát.',
-                '',
-                '**Ví dụ:**',
-                '`!lyric Shape of You`',
-                '`!lyric Ed Sheeran Shape of You`',
-                '',
-                'Nên nhập cả **tên ca sĩ + tên bài hát** để có kết quả chính xác hơn.',
-              ].join('\n'),
-
-            color:
-              0x5865f2,
-          }
-        );
-
-        return;
-      }
+      await new Promise(
+        resolve =>
+          setTimeout(
+            resolve,
+            1000
+          )
+      );
 
 
-      /*
-       * ---------------------------------------------------
-       * LOADING
-       * ---------------------------------------------------
-       */
+      /* =====================================================
+         DATABASE
+      ===================================================== */
 
-      const loadingMessage =
-        await message.channel
-          .send({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle(
-                  '🎵 Đang tìm bài hát...'
-                )
-                .setDescription(
-                  `Đang tìm **${escapeMarkdown(
-                    query
-                  )}**...`
-                )
-                .setColor(
-                  0x5865f2
-                ),
-            ],
-          })
-          .catch(
-            error => {
-
-              logger.warn(
-                '[LYRIC] Không thể gửi loading:',
-                error?.message ||
-                  error
-              );
-
-              return null;
-            }
-          );
+      startupLog(
+        'Initializing database...'
+      );
 
 
-      /*
-       * ---------------------------------------------------
-       * SEARCH
-       * ---------------------------------------------------
-       */
-
-      const result =
-        await searchLyrics(
-          query
-        );
+      const dbInstance =
+        await initializeDatabase();
 
 
-      /*
-       * ---------------------------------------------------
-       * NOT FOUND
-       * ---------------------------------------------------
-       */
-
-      if (!result) {
-
-        const embed =
-          new EmbedBuilder()
-            .setTitle(
-              '❌ Không tìm thấy bài hát'
-            )
-            .setDescription(
-              [
-                `Không tìm thấy lyrics cho **${escapeMarkdown(
-                  query
-                )}**.`,
-                '',
-                'Bạn có thể thử nhập cả **tên ca sĩ + tên bài hát**.',
-                '',
-                '**Ví dụ:**',
-                '`!lyric Ed Sheeran Shape of You`',
-                '`!lyric Adele Hello`',
-              ].join('\n')
-            )
-            .setColor(
-              0xed4245
-            );
+      this.db =
+        dbInstance.db;
 
 
-        await updateOrSend(
-          message,
-          loadingMessage,
-          embed
-        );
-
-        return;
-      }
+      const dbStatus =
+        this.db.getStatus();
 
 
-      /*
-       * ---------------------------------------------------
-       * GET LYRICS
-       * ---------------------------------------------------
-       */
+      if (dbStatus.isDegraded) {
 
-      const lyrics =
-        getLyricsText(
-          result
-        );
-
-
-      if (!lyrics) {
-
-        const embed =
-          new EmbedBuilder()
-            .setTitle(
-              '❌ Không có lyrics'
-            )
-            .setDescription(
-              [
-                `Đã tìm thấy **${escapeMarkdown(
-                  result.trackName ||
-                    query
-                )}**.`,
-                '',
-                'Nhưng API không trả về phần lời bài hát.',
-                '',
-                'Bạn có thể thử nhập lại:',
-                '`!lyric Tên ca sĩ Tên bài hát`',
-              ].join('\n')
-            )
-            .setColor(
-              0xed4245
-            );
-
-
-        await updateOrSend(
-          message,
-          loadingMessage,
-          embed
-        );
-
-        return;
-      }
-
-
-      /*
-       * ---------------------------------------------------
-       * SPLIT
-       * ---------------------------------------------------
-       */
-
-      let chunks =
-        splitText(
-          lyrics,
-          MAX_LYRICS_LENGTH
-        );
-
-
-      if (
-        chunks.length >
-        MAX_LYRICS_PAGES
-      ) {
+        logger.warn('');
 
         logger.warn(
-          `[LYRIC] Lyrics quá dài: ${chunks.length} pages`
+          '╔═══════════════════════════════════════════════════════╗'
         );
 
-        chunks =
-          chunks.slice(
-            0,
-            MAX_LYRICS_PAGES
-          );
-      }
-
-
-      /*
-       * ---------------------------------------------------
-       * FIRST PAGE
-       * ---------------------------------------------------
-       */
-
-      const firstEmbed =
-        createLyricsEmbed(
-          result,
-          chunks[0],
-          1,
-          chunks.length
+        logger.warn(
+          '║ ⚠️  DATABASE RUNNING IN DEGRADED MODE               ║'
         );
 
+        logger.warn(
+          '║                                                       ║'
+        );
 
-      if (loadingMessage) {
+        logger.warn(
+          '║ Connection: In-Memory Storage                        ║'
+        );
 
-        await loadingMessage
-          .edit({
-            embeds: [
-              firstEmbed,
-            ],
-          })
-          .catch(
-            async error => {
+        logger.warn(
+          '║ Data Persistence: DISABLED                           ║'
+        );
 
-              logger.warn(
-                '[LYRIC] Không thể edit loading:',
-                error?.message ||
-                  error
-              );
+        logger.warn(
+          '║ Action Required: Fix PostgreSQL if persistence needed║'
+        );
 
-              await message.channel
-                .send({
-                  embeds: [
-                    firstEmbed,
-                  ],
-                })
-                .catch(
-                  () => {}
-                );
-            }
-          );
+        logger.warn(
+          '╚═══════════════════════════════════════════════════════╝'
+        );
+
+        logger.warn('');
 
       } else {
 
-        await message.channel
-          .send({
-            embeds: [
-              firstEmbed,
-            ],
-          })
-          .catch(
-            error => {
+        startupLog(
+          `✅ Database Status: ${dbStatus.connectionType} (fully operational)`
+        );
 
-              logger.warn(
-                '[LYRIC] Không thể gửi lyrics:',
-                error?.message ||
-                  error
-              );
-            }
-          );
       }
 
 
-      /*
-       * ---------------------------------------------------
-       * OTHER PAGES
-       * ---------------------------------------------------
-       */
+      /* =====================================================
+         WEB SERVER
+      ===================================================== */
 
-      for (
-        let index = 1;
-        index < chunks.length;
-        index++
-      ) {
-
-        const embed =
-          createLyricsEmbed(
-            result,
-            chunks[index],
-            index + 1,
-            chunks.length
-          );
-
-
-        await message.channel
-          .send({
-            embeds: [
-              embed,
-            ],
-          })
-          .catch(
-            error => {
-
-              logger.warn(
-                `[LYRIC] Không thể gửi page ${
-                  index + 1
-                }:`,
-                error?.message ||
-                  error
-              );
-            }
-          );
-      }
-
-
-      logger.info(
-        `[LYRIC] Successfully returned "${result.trackName || query}"`
+      startupLog(
+        'Starting web server...'
       );
+
+
+      this.startWebServer();
+
+
+      /* =====================================================
+         LOAD COMMANDS
+         -----------------------------------------------------
+         CỰC KỲ QUAN TRỌNG
+         
+         Prefix commands vẫn cần client.commands.
+         
+         Ví dụ:
+         
+         !faq
+         !clearuser
+         !lyric
+      ===================================================== */
+
+      startupLog(
+        'Loading commands...'
+      );
+
+
+      await loadCommands(
+        this
+      );
+
+
+      startupLog(
+        `Commands loaded: ${this.commands.size}`
+      );
+
+
+      /* =====================================================
+         LOAD HANDLERS
+         -----------------------------------------------------
+         Load:
+         
+         handlers/events.js
+         handlers/interactions.js
+      ===================================================== */
+
+      startupLog(
+        'Loading handlers...'
+      );
+
+
+      await this.loadHandlers();
+
+
+      startupLog(
+        'Handlers loaded.'
+      );
+
+
+      /* =====================================================
+         LOGIN DISCORD
+      ===================================================== */
+
+      startupLog(
+        'Logging into Discord...'
+      );
+
+
+      await this.login(
+        this.config.bot.token
+      );
+
+
+      startupLog(
+        'Discord login successful.'
+      );
+
+
+      /* =====================================================
+         DISABLE OLD SLASH COMMANDS
+         -----------------------------------------------------
+         Bot KHÔNG đăng ký Slash Commands mới.
+         
+         Chỉ xóa những Slash Commands cũ còn tồn tại
+         trên Discord.
+      ===================================================== */
+
+      await this.disableSlashCommands();
+
+
+      /* =====================================================
+         ONLINE
+      ===================================================== */
+
+      const databaseMode =
+        dbStatus.isDegraded
+          ? 'Optional in-memory mode'
+          : 'Connected (persistent data enabled)';
+
+
+      const handlerSummary =
+        `${this.buttons.size} buttons, ` +
+        `${this.selectMenus.size} menus, ` +
+        `${this.modals.size} modals`;
+
+
+      startupLog(
+        `ONLINE ✅ | ` +
+        `${this.commands.size} commands loaded | ` +
+        `${handlerSummary} | ` +
+        `Database: ${databaseMode}`
+      );
+
+
+      /* =====================================================
+         CRON
+      ===================================================== */
+
+      this.setupCronJobs();
+
 
     } catch (error) {
 
       logger.error(
-        '[LYRIC] Command error:',
+        'Failed to start bot:',
         error
       );
 
 
-      await sendEmbed(
-        message,
-        {
-          title:
-            '❌ Lỗi lyrics',
-
-          description:
-            'Đã xảy ra lỗi khi tìm lời bài hát. Vui lòng thử lại sau.',
-
-          color:
-            0xed4245,
-        }
-      );
+      process.exit(1);
 
     }
 
-  },
-
-};
-
-
-/* =========================================================
-   SEARCH LRCLIB
-========================================================= */
-
-async function searchLyrics(
-  query
-) {
-
-  if (
-    typeof query !==
-      'string' ||
-    !query.trim()
-  ) {
-
-    return null;
   }
 
 
-  const controller =
-    new AbortController();
+  /* =========================================================
+     DISABLE SLASH COMMANDS
+     ---------------------------------------------------------
+     Xóa:
+     
+     1. Global Slash Commands
+     2. Guild Slash Commands
+     
+     KHÔNG đăng ký lại.
+  ========================================================= */
 
+  async disableSlashCommands() {
 
-  const timeout =
-    setTimeout(
-      () => {
-        controller.abort();
-      },
-      API_TIMEOUT_MS
-    );
+    try {
 
+      const applicationId =
+        this.application?.id ||
+        this.user?.id;
 
-  try {
 
-    const url =
-      new URL(
-        LYRICS_API_URL
-      );
+      if (!applicationId) {
 
+        logger.warn(
+          '⚠️ Không tìm thấy Application ID. Không thể xóa Slash Commands.'
+        );
 
-    url.searchParams.set(
-      'q',
-      query.trim()
-    );
+        return;
 
-
-    const response =
-      await fetch(
-        url,
-        {
-          method:
-            'GET',
-
-          headers: {
-            Accept:
-              'application/json',
-
-            'User-Agent':
-              'DiscordBot-Lyric/1.0',
-          },
-
-          signal:
-            controller.signal,
-        }
-      );
-
-
-    if (!response.ok) {
-
-      logger.warn(
-        `[LYRIC] LRCLIB HTTP ${response.status}`
-      );
-
-      return null;
-    }
-
-
-    const data =
-      await response.json();
-
-
-    if (
-      !Array.isArray(data) ||
-      data.length === 0
-    ) {
-
-      return null;
-    }
-
-
-    /*
-     * Ưu tiên kết quả có plainLyrics.
-     */
-
-    const plain =
-      data.find(
-        item =>
-          typeof item?.plainLyrics ===
-            'string' &&
-          item.plainLyrics.trim()
-      );
-
-
-    if (plain) {
-
-      return plain;
-    }
-
-
-    /*
-     * Fallback syncedLyrics.
-     */
-
-    const synced =
-      data.find(
-        item =>
-          typeof item?.syncedLyrics ===
-            'string' &&
-          item.syncedLyrics.trim()
-      );
-
-
-    if (synced) {
-
-      return synced;
-    }
-
-
-    return data[0] || null;
-
-  } catch (error) {
-
-    if (
-      error?.name ===
-      'AbortError'
-    ) {
-
-      logger.warn(
-        `[LYRIC] LRCLIB timeout after ${API_TIMEOUT_MS}ms`
-      );
-
-    } else {
-
-      logger.error(
-        '[LYRIC] LRCLIB error:',
-        error
-      );
-    }
-
-
-    return null;
-
-  } finally {
-
-    clearTimeout(
-      timeout
-    );
-  }
-
-}
-
-
-/* =========================================================
-   GET LYRICS TEXT
-========================================================= */
-
-function getLyricsText(
-  result
-) {
-
-  if (!result) {
-
-    return '';
-  }
-
-
-  /*
-   * Plain lyrics.
-   */
-
-  if (
-    typeof result.plainLyrics ===
-      'string' &&
-    result.plainLyrics.trim()
-  ) {
-
-    return cleanLyrics(
-      result.plainLyrics
-    );
-  }
-
-
-  /*
-   * Synced lyrics.
-   */
-
-  if (
-    typeof result.syncedLyrics ===
-      'string' &&
-    result.syncedLyrics.trim()
-  ) {
-
-    return cleanSyncedLyrics(
-      result.syncedLyrics
-    );
-  }
-
-
-  return '';
-}
-
-
-/* =========================================================
-   CLEAN LYRICS
-========================================================= */
-
-function cleanLyrics(
-  text
-) {
-
-  return String(
-    text || ''
-  )
-    .replace(
-      /\r\n/g,
-      '\n'
-    )
-    .replace(
-      /\r/g,
-      '\n'
-    )
-    .replace(
-      /\n{4,}/g,
-      '\n\n\n'
-    )
-    .trim();
-
-}
-
-
-/* =========================================================
-   CLEAN SYNCED LYRICS
-========================================================= */
-
-function cleanSyncedLyrics(
-  text
-) {
-
-  return String(
-    text || ''
-  )
-    .split(/\r?\n/)
-    .map(
-      line =>
-        line
-          .replace(
-            /^\s*\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*/,
-            ''
-          )
-          .trim()
-    )
-    .filter(Boolean)
-    .join('\n')
-    .replace(
-      /\n{4,}/g,
-      '\n\n\n'
-    )
-    .trim();
-
-}
-
-
-/* =========================================================
-   NORMALIZE QUERY
-========================================================= */
-
-function normalizeLyricsQuery(
-  args
-) {
-
-  /*
-   * -------------------------------------------------------
-   * EMPTY
-   * -------------------------------------------------------
-   */
-
-  if (
-    args === undefined ||
-    args === null
-  ) {
-
-    return '';
-  }
-
-
-  /*
-   * -------------------------------------------------------
-   * STRING
-   * -------------------------------------------------------
-   */
-
-  if (
-    typeof args ===
-    'string'
-  ) {
-
-    return args.trim();
-  }
-
-
-  /*
-   * -------------------------------------------------------
-   * ARRAY
-   * -------------------------------------------------------
-   *
-   * Ví dụ:
-   *
-   * [
-   *   'Ed',
-   *   'Sheeran',
-   *   'Shape',
-   *   'of',
-   *   'You'
-   * ]
-   */
-
-  if (
-    Array.isArray(args)
-  ) {
-
-    return args
-      .flatMap(
-        value =>
-          normalizeSingleArgument(
-            value
-          )
-      )
-      .filter(Boolean)
-      .join(' ')
-      .trim();
-  }
-
-
-  /*
-   * -------------------------------------------------------
-   * OBJECT
-   * -------------------------------------------------------
-   *
-   * Hỗ trợ các adapter truyền:
-   *
-   * {
-   *   query: '...'
-   * }
-   *
-   * {
-   *   args: [...]
-   * }
-   */
-
-  if (
-    typeof args ===
-    'object'
-  ) {
-
-    const directKeys = [
-      'query',
-      'song',
-      'songName',
-      'title',
-      'search',
-      'input',
-      'text',
-      'content',
-      'value',
-      'rawArgs',
-    ];
-
-
-    for (
-      const key
-      of directKeys
-    ) {
-
-      const value =
-        args[key];
-
-
-      if (
-        typeof value ===
-          'string' &&
-        value.trim()
-      ) {
-
-        return value.trim();
       }
 
 
-      if (
-        Array.isArray(value)
-      ) {
-
-        const result =
-          value
-            .flatMap(
-              item =>
-                normalizeSingleArgument(
-                  item
-                )
-            )
-            .filter(Boolean)
-            .join(' ')
-            .trim();
+      startupLog(
+        '🧹 Removing old Slash Commands...'
+      );
 
 
-        if (result) {
+      /* =====================================================
+         GLOBAL COMMANDS
+      ===================================================== */
 
-          return result;
-        }
-      }
-    }
+      try {
 
+        await this.rest.put(
 
-    /*
-     * Nested args.
-     */
+          Routes.applicationCommands(
+            applicationId
+          ),
 
-    const nestedKeys = [
-      'args',
-      'arguments',
-      'params',
-      'parameters',
-    ];
+          {
+            body: [],
+          }
 
-
-    for (
-      const key
-      of nestedKeys
-    ) {
-
-      const value =
-        args[key];
-
-
-      if (
-        value === args
-      ) {
-
-        continue;
-      }
-
-
-      const result =
-        normalizeLyricsQuery(
-          value
         );
 
 
-      if (result) {
+        startupLog(
+          '✅ Global Slash Commands removed.'
+        );
 
-        return result;
+
+      } catch (error) {
+
+        logger.error(
+          '❌ Failed to remove Global Slash Commands:',
+          error
+        );
+
       }
-    }
 
 
-    /*
-     * Tuyệt đối không:
-     *
-     * String(args)
-     *
-     * vì sẽ thành:
-     *
-     * [object Object]
-     */
+      /* =====================================================
+         GUILD COMMANDS
+      ===================================================== */
 
-    return '';
-  }
+      let guilds;
 
 
-  /*
-   * Primitive.
-   */
+      try {
 
-  return String(
-    args
-  ).trim();
-
-}
+        guilds =
+          await this.guilds.fetch();
 
 
-/* =========================================================
-   NORMALIZE ONE ARGUMENT
-========================================================= */
-
-function normalizeSingleArgument(
-  value
-) {
-
-  if (
-    value === undefined ||
-    value === null
-  ) {
-
-    return [];
-  }
+        startupLog(
+          `🔎 Found ${guilds.size} guild(s).`
+        );
 
 
-  if (
-    typeof value ===
-    'string'
-  ) {
+      } catch (error) {
 
-    return [
-      value.trim(),
-    ].filter(Boolean);
-  }
+        logger.error(
+          '❌ Failed to fetch guilds:',
+          error
+        );
 
+        return;
 
-  if (
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-
-    return [
-      String(value),
-    ];
-  }
+      }
 
 
-  if (
-    typeof value ===
-    'object'
-  ) {
+      let successCount = 0;
 
-    const keys = [
-      'value',
-      'name',
-      'text',
-      'content',
-      'query',
-      'input',
-    ];
+      let failedCount = 0;
 
 
-    for (
-      const key
-      of keys
-    ) {
-
-      if (
-        typeof value[key] ===
-          'string' &&
-        value[key].trim()
+      for (
+        const guild
+        of guilds.values()
       ) {
 
-        return [
-          value[key].trim(),
-        ];
+        try {
+
+          await this.rest.put(
+
+            Routes.applicationGuildCommands(
+              applicationId,
+              guild.id
+            ),
+
+            {
+              body: [],
+            }
+
+          );
+
+
+          successCount++;
+
+
+          logger.info(
+            `✅ Slash Commands removed from ${guild.name} (${guild.id})`
+          );
+
+
+        } catch (error) {
+
+          failedCount++;
+
+
+          logger.error(
+            `❌ Failed to remove Slash Commands from ${guild.name}:`,
+            error
+          );
+
+        }
+
       }
-    }
 
 
-    return [];
-  }
-
-
-  return [];
-
-}
-
-
-/* =========================================================
-   CREATE EMBED
-========================================================= */
-
-function createLyricsEmbed(
-  result,
-  lyrics,
-  page = 1,
-  totalPages = 1
-) {
-
-  const trackName =
-    result?.trackName ||
-    'Không rõ tên bài hát';
-
-
-  const artistName =
-    result?.artistName ||
-    'Không rõ ca sĩ';
-
-
-  const albumName =
-    result?.albumName ||
-    '';
-
-
-  const embed =
-    new EmbedBuilder()
-      .setTitle(
-        `🎵 ${truncate(
-          trackName,
-          240
-        )}`
-      )
-      .setDescription(
-        lyrics
-      )
-      .setColor(
-        0x5865f2
+      startupLog(
+        `✅ Slash Commands disabled. ` +
+        `Guilds: ${successCount} removed, ${failedCount} failed.`
       );
 
 
-  const footer = [];
+      logger.info(
+        '🚫 Slash Command registration is disabled.'
+      );
 
 
-  if (artistName) {
+    } catch (error) {
 
-    footer.push(
-      artistName
+      logger.error(
+        '❌ Unexpected error while disabling Slash Commands:',
+        error
+      );
+
+    }
+
+  }
+
+
+  /* =========================================================
+     WEB SERVER
+  ========================================================= */
+
+  startWebServer() {
+
+    const app =
+      express();
+
+
+    const configuredPort =
+      Number(
+        this.config.api?.port ||
+        process.env.PORT ||
+        3000
+      );
+
+
+    const maxPortRetryAttempts =
+      Number(
+        process.env.PORT_RETRY_ATTEMPTS ||
+        5
+      );
+
+
+    const host =
+      process.env.WEB_HOST ||
+      '0.0.0.0';
+
+
+    const corsOrigin =
+      this.config.api?.cors?.origin ||
+      '*';
+
+
+    /* =====================================================
+       CORS
+    ===================================================== */
+
+    app.use(
+      (req, res, next) => {
+
+        const allowedOrigins =
+          Array.isArray(corsOrigin)
+            ? corsOrigin
+            : [corsOrigin];
+
+
+        const origin =
+          req.headers.origin;
+
+
+        if (
+          allowedOrigins.includes('*') ||
+          allowedOrigins.includes(origin)
+        ) {
+
+          res.header(
+            'Access-Control-Allow-Origin',
+            origin || '*'
+          );
+
+        }
+
+
+        res.header(
+          'Access-Control-Allow-Methods',
+          'GET, POST, OPTIONS'
+        );
+
+
+        res.header(
+          'Access-Control-Allow-Headers',
+          'Content-Type, Authorization'
+        );
+
+
+        if (
+          req.method ===
+          'OPTIONS'
+        ) {
+
+          return res.sendStatus(
+            200
+          );
+
+        }
+
+
+        next();
+
+      }
     );
-  }
 
 
-  if (albumName) {
+    /* =====================================================
+       RATE LIMIT
+    ===================================================== */
 
-    footer.push(
-      albumName
-    );
-  }
-
-
-  if (
-    totalPages > 1
-  ) {
-
-    footer.push(
-      `Trang ${page}/${totalPages}`
-    );
-  }
+    const requestCounts =
+      new Map();
 
 
-  if (
-    footer.length
-  ) {
-
-    embed.setFooter({
-      text:
-        footer.join(
-          ' • '
-        ),
-    });
-  }
+    const windowMs =
+      60000;
 
 
-  return embed;
-}
+    const maxRequests =
+      this.config.api?.rateLimit?.max ||
+      100;
 
 
-/* =========================================================
-   UPDATE OR SEND
-========================================================= */
+    app.use(
+      (req, res, next) => {
 
-async function updateOrSend(
-  message,
-  loadingMessage,
-  embed
-) {
+        const ip =
+          req.ip;
 
-  if (
-    loadingMessage
-  ) {
 
-    const edited =
-      await loadingMessage
-        .edit({
-          embeds: [
-            embed,
-          ],
-        })
-        .then(
-          () => true
-        )
-        .catch(
-          error => {
+        const now =
+          Date.now();
 
-            logger.warn(
-              '[LYRIC] Edit message failed:',
-              error?.message ||
-                error
+
+        const windowStart =
+          now - windowMs;
+
+
+        if (
+          !requestCounts.has(ip)
+        ) {
+
+          requestCounts.set(
+            ip,
+            []
+          );
+
+        }
+
+
+        const times =
+          requestCounts
+            .get(ip)
+            .filter(
+              time =>
+                time >
+                windowStart
             );
 
-            return false;
+
+        if (
+          times.length >=
+          maxRequests
+        ) {
+
+          return res
+            .status(429)
+            .json({
+              error:
+                'Too many requests',
+            });
+
+        }
+
+
+        times.push(
+          now
+        );
+
+
+        requestCounts.set(
+          ip,
+          times
+        );
+
+
+        next();
+
+      }
+    );
+
+
+    /* =====================================================
+       HEALTH
+    ===================================================== */
+
+    app.get(
+      '/health',
+      (req, res) => {
+
+        const dbStatus =
+          this.db?.getStatus?.() || {
+            isDegraded:
+              'unknown',
+            connectionType:
+              'none',
+          };
+
+
+        res
+          .status(200)
+          .json({
+
+            status:
+              'healthy',
+
+            timestamp:
+              new Date()
+                .toISOString(),
+
+            uptime:
+              process.uptime(),
+
+            database: {
+
+              connected:
+                dbStatus.connectionType !==
+                'none',
+
+              degraded:
+                dbStatus.isDegraded,
+
+              type:
+                dbStatus.connectionType,
+
+            },
+
+          });
+
+      }
+    );
+
+
+    /* =====================================================
+       READY
+    ===================================================== */
+
+    app.get(
+      '/ready',
+      (req, res) => {
+
+        const dbStatus =
+          this.db?.getStatus?.() || {
+
+            isDegraded:
+              true,
+
+            connectionType:
+              'none',
+
+          };
+
+
+        const isReady =
+          this.isReady() &&
+          !dbStatus.isDegraded;
+
+
+        const metrics = {
+
+          guildCount:
+            this.guilds?.cache?.size ??
+            0,
+
+          commandCount:
+            this.commands?.size ??
+            0,
+
+          database: {
+
+            mode:
+              dbStatus.connectionType,
+
+            degraded:
+              dbStatus.isDegraded,
+
+            degradedReason:
+              dbStatus.degradedReason ??
+              null,
+
+          },
+
+          schemaVersion:
+            EXPECTED_SCHEMA_VERSION,
+
+          schemaLabel:
+            EXPECTED_SCHEMA_LABEL,
+
+        };
+
+
+        if (isReady) {
+
+          return res
+            .status(200)
+            .json({
+
+              ready:
+                true,
+
+              message:
+                'Bot is ready',
+
+              metrics,
+
+            });
+
+        }
+
+
+        return res
+          .status(503)
+          .json({
+
+            ready:
+              false,
+
+            reason:
+              !this.isReady()
+                ? 'Bot not Ready'
+                : 'Database degraded',
+
+            metrics,
+
+          });
+
+      }
+    );
+
+
+    /* =====================================================
+       ROOT
+    ===================================================== */
+
+    app.get(
+      '/',
+      (req, res) => {
+
+        res
+          .status(200)
+          .json({
+
+            message:
+              'TitanBot System Online',
+
+            version:
+              pkg.version,
+
+            timestamp:
+              new Date()
+                .toISOString(),
+
+          });
+
+      }
+    );
+
+
+    /* =====================================================
+       START SERVER
+    ===================================================== */
+
+    const startServer =
+      (
+        port,
+        attempt = 0
+      ) => {
+
+        let hasStartedListening =
+          false;
+
+
+        const server =
+          app.listen(
+            port,
+            host,
+            () => {
+
+              hasStartedListening =
+                true;
+
+
+              this.webServer =
+                server;
+
+
+              startupLog(
+                `✅ Web Server running on ${host}:${port}`
+              );
+
+
+              startupLog(
+                `Health endpoint: http://${host}:${port}/health`
+              );
+
+
+              startupLog(
+                `Ready endpoint: http://${host}:${port}/ready`
+              );
+
+            }
+          );
+
+
+        server.on(
+          'error',
+          error => {
+
+            const errorCode =
+              error?.code ||
+              'UNKNOWN_ERROR';
+
+
+            const errorMessage =
+              error?.message ||
+              'Unknown server error';
+
+
+            /* =============================================
+               PORT BUSY
+            ============================================= */
+
+            if (
+              !hasStartedListening &&
+              errorCode ===
+              'EADDRINUSE' &&
+              attempt <
+              maxPortRetryAttempts
+            ) {
+
+              const nextPort =
+                port + 1;
+
+
+              startupLog(
+                `Port ${port} is already in use. ` +
+                `Trying port ${nextPort}...`
+              );
+
+
+              setTimeout(
+                () =>
+                  startServer(
+                    nextPort,
+                    attempt + 1
+                  ),
+                250
+              );
+
+
+              return;
+
+            }
+
+
+            /* =============================================
+               DUPLICATE BIND
+            ============================================= */
+
+            if (
+              hasStartedListening &&
+              errorCode ===
+              'EADDRINUSE'
+            ) {
+
+              logger.warn(
+                `Web server duplicate bind warning on ${host}:${port}.`
+              );
+
+
+              return;
+
+            }
+
+
+            logger.error(
+              `❌ Web server error on port ${port} ` +
+              `(${errorCode}): ${errorMessage}`
+            );
+
+
+            if (
+              !hasStartedListening
+            ) {
+
+              process.exit(1);
+
+            }
+
           }
         );
 
+      };
 
-    if (edited) {
+
+    startServer(
+      configuredPort,
+      0
+    );
+
+  }
+
+
+  /* =========================================================
+     CRON JOBS
+  ========================================================= */
+
+  setupCronJobs() {
+
+    cron.schedule(
+      '0 6 * * *',
+      () =>
+        checkBirthdays(
+          this
+        )
+    );
+
+
+    cron.schedule(
+      '* * * * *',
+      () =>
+        checkGiveaways(
+          this
+        )
+    );
+
+
+    cron.schedule(
+      '*/15 * * * *',
+      () =>
+        this.updateAllCounters()
+    );
+
+  }
+
+
+  /* =========================================================
+     UPDATE COUNTERS
+  ========================================================= */
+
+  async updateAllCounters() {
+
+    if (!this.db) {
+
+      logger.warn(
+        'Database not available for counter updates'
+      );
 
       return;
+
     }
+
+
+    for (
+      const [
+        guildId,
+        guild
+      ]
+      of this.guilds.cache
+    ) {
+
+      try {
+
+        const counters =
+          await getServerCounters(
+            this,
+            guildId
+          );
+
+
+        const validCounters =
+          [];
+
+
+        const orphanedCounters =
+          [];
+
+
+        for (
+          const counter
+          of counters
+        ) {
+
+          if (
+            !counter ||
+            !counter.type ||
+            !counter.channelId ||
+            counter.enabled === false
+          ) {
+
+            continue;
+
+          }
+
+
+          const channel =
+            guild.channels.cache.get(
+              counter.channelId
+            );
+
+
+          if (channel) {
+
+            validCounters.push(
+              counter
+            );
+
+
+            await updateCounter(
+              this,
+              guild,
+              counter
+            );
+
+          } else {
+
+            orphanedCounters.push(
+              counter
+            );
+
+
+            logger.info(
+              `Removing orphaned counter ${counter.id} ` +
+              `(type: ${counter.type}, ` +
+              `deleted channel: ${counter.channelId}) ` +
+              `from guild ${guildId}`
+            );
+
+          }
+
+        }
+
+
+        /* ===============================================
+           CLEAN ORPHANED COUNTERS
+        =============================================== */
+
+        if (
+          orphanedCounters.length >
+          0
+        ) {
+
+          await saveServerCounters(
+            this,
+            guildId,
+            validCounters
+          );
+
+
+          logger.info(
+            `Cleaned up ${orphanedCounters.length} ` +
+            `orphaned counter(s) from guild ${guildId}`
+          );
+
+        }
+
+
+      } catch (error) {
+
+        logger.error(
+          `Error updating counters for guild ${guildId}:`,
+          error
+        );
+
+      }
+
+    }
+
   }
 
 
-  await message.channel
-    .send({
-      embeds: [
-        embed,
-      ],
-    })
-    .catch(
-      error => {
+  /* =========================================================
+     LOAD HANDLERS
+  ========================================================= */
 
-        logger.warn(
-          '[LYRIC] Send embed failed:',
-          error?.message ||
-            error
-        );
-      }
+  async loadHandlers() {
+
+    startupLog(
+      'Loading handlers...'
     );
 
-}
 
+    const handlers = [
 
-/* =========================================================
-   SEND EMBED
-========================================================= */
+      {
+        path:
+          'events',
 
-async function sendEmbed(
-  message,
-  {
-    title,
-    description,
-    color = 0x5865f2,
-  }
-) {
+        type:
+          'default',
 
-  if (
-    !message?.channel
-  ) {
+        required:
+          true,
+      },
 
-    return null;
-  }
+      {
+        path:
+          'interactions',
 
+        type:
+          'default',
 
-  return message.channel
-    .send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle(
-            title
-          )
-          .setDescription(
-            description
-          )
-          .setColor(
-            color
-          ),
-      ],
-    })
-    .catch(
-      error => {
+        required:
+          true,
+      },
 
-        logger.warn(
-          '[LYRIC] Không thể gửi embed:',
-          error?.message ||
-            error
-        );
-
-        return null;
-      }
-    );
-
-}
-
-
-/* =========================================================
-   SPLIT TEXT
-========================================================= */
-
-function splitText(
-  text,
-  maxLength = 3800
-) {
-
-  const normalized =
-    String(
-      text || ''
-    ).trim();
-
-
-  if (!normalized) {
-
-    return [];
-  }
-
-
-  if (
-    normalized.length <=
-    maxLength
-  ) {
-
-    return [
-      normalized,
     ];
-  }
 
 
-  const chunks = [];
-
-
-  let remaining =
-    normalized;
-
-
-  while (
-    remaining.length >
-    maxLength
-  ) {
-
-    /*
-     * Ưu tiên newline.
-     */
-
-    let splitAt =
-      remaining.lastIndexOf(
-        '\n',
-        maxLength
-      );
-
-
-    /*
-     * Nếu newline quá gần đầu,
-     * tìm space.
-     */
-
-    if (
-      splitAt < 500
+    for (
+      const handler
+      of handlers
     ) {
 
-      splitAt =
-        remaining.lastIndexOf(
-          ' ',
-          maxLength
+      try {
+
+        startupLog(
+          `Loading handler: ${handler.path}`
         );
+
+
+        const module =
+          await import(
+            `./handlers/${handler.path}.js`
+          );
+
+
+        const loaderFn =
+          handler.type.startsWith(
+            'named:'
+          )
+
+            ? module[
+                handler.type.split(
+                  ':'
+                )[1]
+              ]
+
+            : module.default;
+
+
+        if (
+          typeof loaderFn !==
+          'function'
+        ) {
+
+          throw new Error(
+            `Invalid loader export from ${handler.path}`
+          );
+
+        }
+
+
+        await loaderFn(
+          this
+        );
+
+
+        startupLog(
+          `✅ Loaded ${handler.path}`
+        );
+
+
+      } catch (error) {
+
+        if (
+          handler.required
+        ) {
+
+          logger.error(
+            `❌ Failed to load required handler ${handler.path}:`,
+            error
+          );
+
+
+          throw error;
+
+        }
+
+
+        if (
+          error.code !==
+          'MODULE_NOT_FOUND'
+        ) {
+
+          logger.warn(
+            `⚠️ Failed to load optional handler ${handler.path}:`,
+            error.message
+          );
+
+        }
+
+      }
+
     }
 
-
-    /*
-     * Nếu vẫn không có:
-     * cắt cứng.
-     */
-
-    if (
-      splitAt <= 0
-    ) {
-
-      splitAt =
-        maxLength;
-    }
-
-
-    const chunk =
-      remaining
-        .slice(
-          0,
-          splitAt
-        )
-        .trim();
-
-
-    if (chunk) {
-
-      chunks.push(
-        chunk
-      );
-    }
-
-
-    remaining =
-      remaining
-        .slice(
-          splitAt
-        )
-        .trim();
   }
 
 
-  if (remaining) {
+  /* =========================================================
+     SHUTDOWN
+  ========================================================= */
 
-    chunks.push(
-      remaining
-    );
-  }
-
-
-  return chunks;
-}
-
-
-/* =========================================================
-   ESCAPE MARKDOWN
-========================================================= */
-
-function escapeMarkdown(
-  text
-) {
-
-  return String(
-    text || ''
-  )
-    .replace(
-      /[`*_~|>]/g,
-      '\\$&'
-    );
-}
-
-
-/* =========================================================
-   TRUNCATE
-========================================================= */
-
-function truncate(
-  text,
-  maxLength
-) {
-
-  const value =
-    String(
-      text || ''
-    );
-
-
-  if (
-    value.length <=
-    maxLength
+  async shutdown(
+    reason = 'UNKNOWN'
   ) {
 
-    return value;
+    shutdownLog(
+      `Bot is shutting down (${reason})...`
+    );
+
+
+    logger.info(
+      '\n' +
+      '='.repeat(60)
+    );
+
+
+    logger.info(
+      `🛑 Graceful Shutdown Initiated (${reason})`
+    );
+
+
+    logger.info(
+      '='.repeat(60)
+    );
+
+
+    try {
+
+      /* =====================================================
+         STOP CRON
+      ===================================================== */
+
+      logger.info(
+        'Stopping cron jobs...'
+      );
+
+
+      cron
+        .getTasks()
+        .forEach(
+          task =>
+            task.stop()
+        );
+
+
+      logger.info(
+        '✅ Cron jobs stopped'
+      );
+
+
+      /* =====================================================
+         DATABASE
+      ===================================================== */
+
+      if (
+        this.db &&
+        this.db.db
+      ) {
+
+        logger.info(
+          'Closing database connection...'
+        );
+
+
+        try {
+
+          if (
+            this.db.db.pool
+          ) {
+
+            await this.db.db.pool.end();
+
+            logger.info(
+              '✅ Database connection closed'
+            );
+
+          }
+
+        } catch (error) {
+
+          logger.warn(
+            'Error closing database pool:',
+            error.message
+          );
+
+        }
+
+      }
+
+
+      /* =====================================================
+         WEB SERVER
+      ===================================================== */
+
+      if (
+        this.webServer
+      ) {
+
+        try {
+
+          await new Promise(
+            resolve =>
+              this.webServer.close(
+                () =>
+                  resolve()
+              )
+          );
+
+
+          logger.info(
+            '✅ Web server closed'
+          );
+
+        } catch (error) {
+
+          logger.warn(
+            'Web server close warning:',
+            error.message
+          );
+
+        }
+
+      }
+
+
+      /* =====================================================
+         DISCORD
+      ===================================================== */
+
+      logger.info(
+        'Destroying Discord client...'
+      );
+
+
+      if (
+        this.isReady()
+      ) {
+
+        try {
+
+          this.destroy();
+
+
+          logger.info(
+            '✅ Discord client destroyed'
+          );
+
+
+        } catch (error) {
+
+          logger.warn(
+            'Discord client destroy warning:',
+            error.message
+          );
+
+        }
+
+      }
+
+
+      logger.info(
+        '✅ Graceful shutdown complete'
+      );
+
+
+      shutdownLog(
+        'Bot stopped successfully.'
+      );
+
+
+      process.exit(0);
+
+
+    } catch (error) {
+
+      logger.error(
+        'Error during graceful shutdown:',
+        error
+      );
+
+
+      process.exit(1);
+
+    }
+
   }
 
-
-  return (
-    value.slice(
-      0,
-      maxLength - 3
-    ) +
-    '...'
-  );
 }
 
 
 /* =========================================================
-   EXPORT
+   BOOTSTRAP
 ========================================================= */
 
-export default command;
+try {
+
+  const bot =
+    new TitanBot();
+
+
+  /* =======================================================
+     SHUTDOWN HANDLERS
+  ======================================================= */
+
+  const setupShutdown =
+    () => {
+
+      process.on(
+        'SIGTERM',
+        () =>
+          bot.shutdown(
+            'SIGTERM'
+          )
+      );
+
+
+      process.on(
+        'SIGINT',
+        () =>
+          bot.shutdown(
+            'SIGINT'
+          )
+      );
+
+
+      /* ===================================================
+         UNCAUGHT EXCEPTION
+      =================================================== */
+
+      process.on(
+        'uncaughtException',
+        error => {
+
+          logger.error(
+            'Uncaught Exception:',
+            error
+          );
+
+
+          bot.shutdown(
+            'UNCAUGHT_EXCEPTION'
+          );
+
+        }
+      );
+
+
+      /* ===================================================
+         UNHANDLED REJECTION
+      =================================================== */
+
+      process.on(
+        'unhandledRejection',
+        (
+          reason,
+          promise
+        ) => {
+
+          const code =
+            reason?.code;
+
+
+          /*
+           * Discord interaction errors
+           * có thể bỏ qua.
+           */
+
+          if (
+            code === 10062 ||
+            code === 40060 ||
+            code === 50027
+          ) {
+
+            logger.warn(
+              'Recoverable Discord interaction rejection:',
+              reason?.message ||
+              reason
+            );
+
+
+            return;
+
+          }
+
+
+          logger.error(
+            'Unhandled Rejection at:',
+            promise,
+            'reason:',
+            reason
+          );
+
+
+          bot.shutdown(
+            'UNHANDLED_REJECTION'
+          );
+
+        }
+      );
+
+    };
+
+
+  setupShutdown();
+
+
+  /* =======================================================
+     START
+  ======================================================= */
+
+  bot.start()
+    .catch(
+      error => {
+
+        logger.error(
+          'Fatal error during bot startup:',
+          error
+        );
+
+
+        bot.shutdown(
+          'STARTUP_ERROR'
+        );
+
+      }
+    );
+
+
+} catch (error) {
+
+  logger.error(
+    'Fatal error during bot startup:',
+    error
+  );
+
+
+  process.exit(1);
+
+}
+
+
+export default TitanBot;
