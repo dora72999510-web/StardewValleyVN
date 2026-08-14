@@ -413,8 +413,8 @@ async function handleProtectedChannels(message) {
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
     .setDescription(
-      `🚫 Tài khoản ${member} đã bị hạn chế 1 ngày ` +
-      `do gửi nội dung vào <#1521007503263928341>.`
+      `<:emoji_134:1523413261574471701> Tài khoản ${member} đã bị hạn chế 1 ngày ` +
+      `do gửi nội dung vào <#1521007503263928341>`
     );
 
   await logChannel.send({
@@ -429,7 +429,7 @@ async function handleProtectedChannels(message) {
 
     const warn =
       await message.channel.send(
-        `🚫 ${member} đã bị hạn chế 1 ngày.`
+        `🚫 Bạn đã bị hạn chế 1 ngày.`
       );
 
 
