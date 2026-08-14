@@ -24,11 +24,7 @@ import { logger } from '../utils/logger.js';
  * hãy đặt LYRIC_CHANNEL_ID trong .env.
  */
 
-const LYRIC_CHANNEL_ID =
-  String(
-    process.env.LYRIC_CHANNEL_ID || ''
-  ).trim();
-
+const LYRIC_CHANNEL_ID = '1537723665754357780'
 
 /*
  * LRCLIB API
