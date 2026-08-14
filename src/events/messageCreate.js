@@ -1,3 +1,4 @@
+```js
 import {
   EmbedBuilder,
   Events,
@@ -99,10 +100,19 @@ const EXEMPT_ROLE_IDS = [
 
 /* =========================================================
    PROTECTED TIMEOUT
+   24 HOURS
 ========================================================= */
 
 const PROTECTED_TIMEOUT =
   24 * 60 * 60 * 1000;
+
+
+/* =========================================================
+   LOG CHANNEL
+========================================================= */
+
+const PROTECTED_LOG_CHANNEL_ID =
+  '1510871300132835368';
 
 
 /* =========================================================
@@ -163,6 +173,8 @@ export default {
 
       /* =====================================================
          PROTECTED CHANNEL
+         -----------------------------------------------------
+         Chạy trước Prefix / FAQ / XP.
       ===================================================== */
 
       if (
@@ -265,6 +277,10 @@ async function handleProtectedChannels(
 
   try {
 
+    /* =====================================================
+       CHECK CHANNEL
+    ===================================================== */
+
     if (
       !PROTECTED_CHANNELS.includes(
         message.channel.id
@@ -273,6 +289,12 @@ async function handleProtectedChannels(
 
       return false;
     }
+
+
+    logger.info(
+      `[PROTECTED] Message detected in protected channel: ` +
+      `${message.channel.id} by ${message.author.tag}`
+    );
 
 
     /* =====================================================
@@ -285,29 +307,38 @@ async function handleProtectedChannels(
           message.author.id
         )
         .catch(
-          () => null
+          error => {
+
+            logger.error(
+              `[PROTECTED] Không thể fetch member ${message.author.id}:`,
+              error
+            );
+
+            return null;
+          }
         );
 
 
     if (!member) {
+
       return true;
     }
 
 
     /* =====================================================
        BYPASS
+       -----------------------------------------------------
+       Administrator và role exempt không bị xử lý.
+       
+       KHÔNG bypass ManageMessages.
+       Người có ManageMessages vẫn có thể bị timeout
+       nếu không phải Administrator / exempt role.
     ===================================================== */
 
     if (
 
       member.permissions.has(
         PermissionsBitField.Flags.Administrator
-      )
-
-      ||
-
-      member.permissions.has(
-        PermissionsBitField.Flags.ManageMessages
       )
 
       ||
@@ -321,6 +352,10 @@ async function handleProtectedChannels(
 
     ) {
 
+      logger.info(
+        `[PROTECTED] Bypass ${member.user.tag}`
+      );
+
       return true;
     }
 
@@ -329,51 +364,76 @@ async function handleProtectedChannels(
        DELETE MESSAGE
     ===================================================== */
 
-    await message
-      .delete()
-      .catch(
-        () => {}
+    try {
+
+      await message.delete();
+
+      logger.info(
+        `[PROTECTED] Deleted message from ${member.user.tag}`
       );
 
-
-    /* =====================================================
-       CHECK MODERATABLE
-    ===================================================== */
-
-    if (
-      !member.moderatable
-    ) {
+    } catch (error) {
 
       logger.warn(
-        `Cannot timeout ${member.user.tag} ` +
-        `(role hierarchy issue)`
+        `[PROTECTED] Không thể xóa message của ${member.user.tag}:`,
+        error?.message ||
+        error
       );
 
-      return true;
     }
 
 
     /* =====================================================
-       TIMEOUT
+       TIMEOUT CHECK
     ===================================================== */
 
-    await member.timeout(
-      PROTECTED_TIMEOUT,
-      'Message in protected channel'
-    );
+    if (!member.moderatable) {
+
+      logger.error(
+        `[PROTECTED] KHÔNG THỂ TIMEOUT ${member.user.tag}. ` +
+        `Kiểm tra quyền Moderate Members và role hierarchy của bot.`
+      );
 
 
-    logger.warn(
-      `Timeout applied to ${member.user.tag}`
-    );
+    } else {
+
+      /* ===================================================
+         TIMEOUT 24 HOURS
+      =================================================== */
+
+      try {
+
+        await member.timeout(
+          PROTECTED_TIMEOUT,
+          'Message in protected channel'
+        );
+
+
+        logger.warn(
+          `[PROTECTED] Timeout thành công: ` +
+          `${member.user.tag} trong 24 giờ.`
+        );
+
+
+      } catch (error) {
+
+        logger.error(
+          `[PROTECTED] TIMEOUT FAILED cho ${member.user.tag}:`,
+          error
+        );
+
+      }
+
+    }
 
 
     /* =====================================================
        DM USER
     ===================================================== */
 
-    await member
-      .send({
+    try {
+
+      await member.send({
 
         embeds: [
 
@@ -393,25 +453,44 @@ async function handleProtectedChannels(
 
         ],
 
-      })
-      .catch(
-        () => {}
+      });
+
+
+      logger.info(
+        `[PROTECTED] Đã gửi DM cho ${member.user.tag}`
       );
+
+
+    } catch (error) {
+
+      logger.warn(
+        `[PROTECTED] Không thể gửi DM cho ${member.user.tag}:`,
+        error?.message ||
+        error
+      );
+
+    }
 
 
     /* =====================================================
        LOG CHANNEL
-       -----------------------------------------------------
-       Gửi embed vào channel log.
     ===================================================== */
 
     const logChannel =
       await message.guild.channels
         .fetch(
-          '1510871300132835368'
+          PROTECTED_LOG_CHANNEL_ID
         )
         .catch(
-          () => null
+          error => {
+
+            logger.error(
+              `[PROTECTED] Không thể fetch log channel ${PROTECTED_LOG_CHANNEL_ID}:`,
+              error
+            );
+
+            return null;
+          }
         );
 
 
@@ -432,13 +511,37 @@ async function handleProtectedChannels(
           );
 
 
-      await logChannel.send({
+      try {
 
-        embeds: [
-          embed,
-        ],
+        await logChannel.send({
 
-      });
+          embeds: [
+            embed,
+          ],
+
+        });
+
+
+        logger.info(
+          `[PROTECTED] Đã gửi log embed cho ${member.user.tag}`
+        );
+
+
+      } catch (error) {
+
+        logger.error(
+          '[PROTECTED] Không thể gửi log embed:',
+          error
+        );
+
+      }
+
+    } else {
+
+      logger.warn(
+        `[PROTECTED] Log channel ${PROTECTED_LOG_CHANNEL_ID} ` +
+        `không phải text-based channel hoặc không tồn tại.`
+      );
 
     }
 
@@ -447,21 +550,37 @@ async function handleProtectedChannels(
        WARNING MESSAGE
     ===================================================== */
 
-    const warn =
-      await message.channel.send(
-        `🚫 ${member} đã bị hạn chế 1 ngày.`
+    try {
+
+      const warn =
+        await message.channel.send(
+          `🚫 ${member} đã bị hạn chế 1 ngày.`
+        );
+
+
+      setTimeout(
+        () => {
+
+          warn
+            .delete()
+            .catch(
+              () => {}
+            );
+
+        },
+        5000
       );
 
 
-    setTimeout(
-      () =>
-        warn
-          .delete()
-          .catch(
-            () => {}
-          ),
-      5000
-    );
+    } catch (error) {
+
+      logger.warn(
+        '[PROTECTED] Không thể gửi warning message:',
+        error?.message ||
+        error
+      );
+
+    }
 
 
     return true;
@@ -668,6 +787,7 @@ async function handlePrefixCommand(
 
 
     if (!parsed) {
+
       return false;
     }
 
@@ -1095,6 +1215,7 @@ async function handleLeveling(
 
 
     if (!allowed) {
+
       return;
     }
 
@@ -1271,3 +1392,12 @@ async function handleLeveling(
   }
 
 }
+```
+
+Sau khi thay file này, **restart bot** rồi thử một tài khoản không có Administrator và không có 2 role exempt gửi tin vào `1521007503263928341`.
+
+Nếu vẫn không timeout, log mới sẽ chỉ ra nguyên nhân ở dòng:
+
+`[PROTECTED] KHÔNG THỂ TIMEOUT...` hoặc `TIMEOUT FAILED...`
+
+Khi đó gửi mình **đoạn log đó**, mình sẽ xác định chính xác phần quyền Discord hay role hierarchy đang bị vướng.
