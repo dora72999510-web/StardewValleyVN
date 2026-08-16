@@ -259,8 +259,9 @@ export default {
 /* =========================================================
    PROTECTED CHANNELS
    ---------------------------------------------------------
-   Mỗi message trong protected channel sẽ chạy lại function
-   này. Không lưu trạng thái user đã bị phạt trước đó.
+   Không lưu trạng thái user.
+   Mỗi message mới trong protected channel đều được
+   xử lý độc lập.
 ========================================================= */
 
 async function handleProtectedChannels(
@@ -268,6 +269,19 @@ async function handleProtectedChannels(
 ) {
 
   try {
+
+    /* =====================================================
+       DEBUG: MESSAGE RECEIVED
+    ===================================================== */
+
+    logger.warn(
+      `[PROTECTED DEBUG] MESSAGE RECEIVED | ` +
+      `guild=${message.guild.id} | ` +
+      `channel=${message.channel.id} | ` +
+      `user=${message.author.id} | ` +
+      `message=${message.id}`
+    );
+
 
     /* =====================================================
        CHECK CHANNEL
@@ -283,11 +297,14 @@ async function handleProtectedChannels(
     }
 
 
+    logger.warn(
+      `[PROTECTED DEBUG] CHANNEL MATCH | ` +
+      `user=${message.author.id}`
+    );
+
+
     /* =====================================================
        FETCH MEMBER MỚI NHẤT
-       -----------------------------------------------------
-       Không dùng message.member để tránh trạng thái cache
-       cũ sau khi timeout được gỡ.
     ===================================================== */
 
     const member =
@@ -303,8 +320,8 @@ async function handleProtectedChannels(
           error => {
 
             logger.error(
-              `[Protected] Không thể fetch member ` +
-              `${message.author.id}:`,
+              `[PROTECTED DEBUG] MEMBER FETCH ERROR | ` +
+              `user=${message.author.id}`,
               error
             );
 
@@ -316,21 +333,25 @@ async function handleProtectedChannels(
     if (!member) {
 
       logger.warn(
-        `[Protected] Member không tồn tại: ` +
-        `${message.author.id}`
+        `[PROTECTED DEBUG] MEMBER NOT FOUND | ` +
+        `user=${message.author.id}`
       );
 
       return true;
     }
 
 
+    logger.warn(
+      `[PROTECTED DEBUG] MEMBER FETCHED | ` +
+      `user=${member.user.tag} | ` +
+      `id=${member.id} | ` +
+      `moderatable=${member.moderatable} | ` +
+      `timeoutUntil=${member.communicationDisabledUntilTimestamp || 'none'}`
+    );
+
+
     /* =====================================================
        BYPASS
-       -----------------------------------------------------
-       Giữ nguyên logic cũ:
-       - Administrator
-       - ManageMessages
-       - Exempt roles
     ===================================================== */
 
     const isAdministrator =
@@ -362,10 +383,12 @@ async function handleProtectedChannels(
       hasExemptRole
     ) {
 
-      logger.info(
-        `[Protected] Bypass user ` +
-        `${member.user.tag} ` +
-        `(${member.id})`
+      logger.warn(
+        `[PROTECTED DEBUG] BYPASS | ` +
+        `user=${member.user.tag} | ` +
+        `administrator=${isAdministrator} | ` +
+        `manageMessages=${canManageMessages} | ` +
+        `exemptRole=${hasExemptRole}`
       );
 
       return true;
@@ -373,28 +396,33 @@ async function handleProtectedChannels(
 
 
     /* =====================================================
-       LOG VIOLATION
-    ===================================================== */
-
-    logger.warn(
-      `[Protected] Violation detected: ` +
-      `${member.user.tag} (${member.id}) ` +
-      `in #${message.channel.name} (${message.channel.id})`
-    );
-
-
-    /* =====================================================
        DELETE CURRENT MESSAGE
     ===================================================== */
 
+    logger.warn(
+      `[PROTECTED DEBUG] DELETE CURRENT MESSAGE | ` +
+      `message=${message.id}`
+    );
+
+
     await message
       .delete()
+      .then(
+        () => {
+
+          logger.warn(
+            `[PROTECTED DEBUG] CURRENT MESSAGE DELETED | ` +
+            `message=${message.id}`
+          );
+
+        }
+      )
       .catch(
         error => {
 
           logger.warn(
-            `[Protected] Không thể xóa message ` +
-            `${message.id}:`,
+            `[PROTECTED DEBUG] CURRENT MESSAGE DELETE FAILED | ` +
+            `message=${message.id}`,
             error
           );
 
@@ -403,13 +431,40 @@ async function handleProtectedChannels(
 
 
     /* =====================================================
-       DELETE USER MESSAGES - LAST 1 HOUR
+       CLEANUP CHẠY NỀN
+       -----------------------------------------------------
+       CỰC KỲ QUAN TRỌNG:
+       Không await cleanup.
+
+       Nếu cleanup phải quét nhiều channel thì nó không thể
+       chặn timeout bên dưới.
     ===================================================== */
 
-    await deleteRecentUserMessages(
+    deleteRecentUserMessages(
       message.guild,
       message.author.id
-    );
+    )
+      .then(
+        () => {
+
+          logger.info(
+            `[PROTECTED DEBUG] CLEANUP FINISHED | ` +
+            `user=${message.author.id}`
+          );
+
+        }
+      )
+      .catch(
+        error => {
+
+          logger.error(
+            `[PROTECTED DEBUG] CLEANUP ERROR | ` +
+            `user=${message.author.id}`,
+            error
+          );
+
+        }
+      );
 
 
     /* =====================================================
@@ -421,8 +476,9 @@ async function handleProtectedChannels(
     ) {
 
       logger.warn(
-        `[Protected] Không thể timeout ${member.user.tag} ` +
-        `(role hierarchy issue)`
+        `[PROTECTED DEBUG] NOT MODERATABLE | ` +
+        `user=${member.user.tag} | ` +
+        `botRoleTooLow=true`
       );
 
       return true;
@@ -430,9 +486,18 @@ async function handleProtectedChannels(
 
 
     /* =====================================================
+       ABOUT TO TIMEOUT
+    ===================================================== */
+
+    logger.warn(
+      `[PROTECTED DEBUG] ABOUT TO TIMEOUT | ` +
+      `user=${member.user.tag} | ` +
+      `duration=${PROTECTED_TIMEOUT}`
+    );
+
+
+    /* =====================================================
        TIMEOUT
-       -----------------------------------------------------
-       Mỗi lần vi phạm mới đều timeout lại 24 giờ.
     ===================================================== */
 
     try {
@@ -444,24 +509,18 @@ async function handleProtectedChannels(
 
 
       logger.warn(
-        `[Protected] Timeout applied to ` +
-        `${member.user.tag} (${member.id})`
+        `[PROTECTED DEBUG] TIMEOUT SUCCESS | ` +
+        `user=${member.user.tag}`
       );
 
 
     } catch (error) {
 
       logger.error(
-        `[Protected] Timeout failed for ` +
-        `${member.user.tag}:`,
+        `[PROTECTED DEBUG] TIMEOUT FAILED | ` +
+        `user=${member.user.tag}`,
         error
       );
-
-      /*
-       * Không return ở đây.
-       * Vẫn tiếp tục log và warning để biết violation
-       * đã được phát hiện.
-       */
 
     }
 
@@ -496,8 +555,8 @@ async function handleProtectedChannels(
         error => {
 
           logger.warn(
-            `[Protected] Không thể DM ` +
-            `${member.user.tag}:`,
+            `[PROTECTED DEBUG] DM FAILED | ` +
+            `user=${member.user.tag}`,
             error
           );
 
@@ -518,7 +577,7 @@ async function handleProtectedChannels(
           error => {
 
             logger.warn(
-              `[Protected] Không thể fetch log channel:`,
+              `[PROTECTED DEBUG] LOG CHANNEL FETCH FAILED`,
               error
             );
 
@@ -542,7 +601,7 @@ async function handleProtectedChannels(
           error => {
 
             logger.warn(
-              `[Protected] Không thể gửi log:`,
+              `[PROTECTED DEBUG] LOG SEND FAILED`,
               error
             );
 
@@ -562,7 +621,15 @@ async function handleProtectedChannels(
           `🚫 ${member} đã bị hạn chế 1 ngày.`
         )
         .catch(
-          () => null
+          error => {
+
+            logger.warn(
+              `[PROTECTED DEBUG] WARNING SEND FAILED`,
+              error
+            );
+
+            return null;
+          }
         );
 
 
@@ -581,22 +648,22 @@ async function handleProtectedChannels(
     }
 
 
+    logger.warn(
+      `[PROTECTED DEBUG] HANDLER COMPLETE | ` +
+      `user=${member.user.tag}`
+    );
+
+
     return true;
 
 
   } catch (error) {
 
     logger.error(
-      'Protected Channel Error:',
+      '[PROTECTED DEBUG] PROTECTED CHANNEL ERROR:',
       error
     );
 
-
-    /*
-     * Nếu đang ở protected channel mà xảy ra lỗi,
-     * return true để không chạy tiếp counting/prefix/
-     * leveling cho message này.
-     */
 
     return true;
 
@@ -608,13 +675,9 @@ async function handleProtectedChannels(
 /* =========================================================
    DELETE RECENT USER MESSAGES
    ---------------------------------------------------------
-   Xóa tất cả message của đúng user trong 1 giờ trở lại.
+   Xóa message của user trong 1 giờ trở lại.
 
-   Không dùng bulkDelete cho message cũ hơn 14 ngày vì
-   Discord không cho bulk delete message quá cũ.
-
-   Vì window chỉ có 1 giờ nên các message hợp lệ đều
-   nằm trong giới hạn bulk delete.
+   Function này chạy nền, không chặn timeout.
 ========================================================= */
 
 async function deleteRecentUserMessages(
@@ -630,8 +693,10 @@ async function deleteRecentUserMessages(
 
 
     logger.info(
-      `[Protected Cleanup] Bắt đầu quét message ` +
-      `của ${userId} từ ${new Date(cutoff).toISOString()}`
+      `[Protected Cleanup] START | ` +
+      `guild=${guild.id} | ` +
+      `user=${userId} | ` +
+      `cutoff=${new Date(cutoff).toISOString()}`
     );
 
 
@@ -642,7 +707,7 @@ async function deleteRecentUserMessages(
           error => {
 
             logger.error(
-              `[Protected Cleanup] Không thể fetch channels:`,
+              `[Protected Cleanup] CHANNEL FETCH FAILED`,
               error
             );
 
@@ -656,6 +721,24 @@ async function deleteRecentUserMessages(
     }
 
 
+    const botMember =
+      guild.members.me;
+
+
+    if (!botMember) {
+
+      logger.warn(
+        '[Protected Cleanup] BOT MEMBER NOT FOUND'
+      );
+
+      return;
+    }
+
+
+    let totalDeleted =
+      0;
+
+
     /* =====================================================
        LOOP CHANNELS
     ===================================================== */
@@ -667,7 +750,7 @@ async function deleteRecentUserMessages(
       try {
 
         /* =================================================
-           CHỈ TEXT-BASED CHANNEL
+           TEXT-BASED CHANNEL
         ================================================= */
 
         if (
@@ -685,22 +768,8 @@ async function deleteRecentUserMessages(
 
 
         /* =================================================
-           CHECK PERMISSION
+           PERMISSIONS
         ================================================= */
-
-        const botMember =
-          guild.members.me;
-
-
-        if (!botMember) {
-
-          logger.warn(
-            `[Protected Cleanup] Không tìm thấy bot member.`
-          );
-
-          break;
-        }
-
 
         const permissions =
           channel.permissionsFor(
@@ -741,7 +810,7 @@ async function deleteRecentUserMessages(
 
 
         /* =================================================
-           FETCH MESSAGE TỪ MỚI → CŨ
+           FETCH MESSAGES
         ================================================= */
 
         let before =
@@ -756,8 +825,10 @@ async function deleteRecentUserMessages(
 
 
           if (before) {
+
             options.before =
               before;
+
           }
 
 
@@ -770,8 +841,8 @@ async function deleteRecentUserMessages(
                 error => {
 
                   logger.warn(
-                    `[Protected Cleanup] Fetch message ` +
-                    `failed in channel ${channel.id}:`,
+                    `[Protected Cleanup] FETCH FAILED | ` +
+                    `channel=${channel.id}`,
                     error
                   );
 
@@ -784,12 +855,14 @@ async function deleteRecentUserMessages(
             !fetched ||
             fetched.size === 0
           ) {
+
             break;
+
           }
 
 
           /* =================================================
-             MESSAGE CỦA USER TRONG 1 GIỜ
+             FILTER USER + 1 HOUR
           ================================================= */
 
           const targets =
@@ -800,14 +873,23 @@ async function deleteRecentUserMessages(
                   msg.author?.id !==
                   userId
                 ) {
+
                   return false;
+
                 }
 
 
-                return (
-                  msg.createdTimestamp >=
+                if (
+                  msg.createdTimestamp <
                   cutoff
-                );
+                ) {
+
+                  return false;
+
+                }
+
+
+                return true;
 
               }
             );
@@ -822,25 +904,32 @@ async function deleteRecentUserMessages(
           ) {
 
             logger.info(
-              `[Protected Cleanup] Channel ` +
-              `${channel.id}: tìm thấy ` +
-              `${targets.size} message của ${userId}`
+              `[Protected Cleanup] TARGETS | ` +
+              `channel=${channel.id} | ` +
+              `count=${targets.size}`
             );
 
 
             try {
 
-              await channel.bulkDelete(
-                targets,
-                true
-              );
+              const deleted =
+                await channel.bulkDelete(
+                  targets,
+                  true
+                );
+
+
+              totalDeleted +=
+                deleted?.size ||
+                targets.size;
 
 
             } catch (bulkError) {
 
               logger.warn(
-                `[Protected Cleanup] bulkDelete failed ` +
-                `in ${channel.id}, fallback từng message:`,
+                `[Protected Cleanup] BULK DELETE FAILED | ` +
+                `channel=${channel.id} | ` +
+                `fallback=individual`,
                 bulkError
               );
 
@@ -851,12 +940,19 @@ async function deleteRecentUserMessages(
 
                 await msg
                   .delete()
+                  .then(
+                    () => {
+
+                      totalDeleted++;
+
+                    }
+                  )
                   .catch(
                     error => {
 
                       logger.warn(
-                        `[Protected Cleanup] Không thể xóa ` +
-                        `message ${msg.id}:`,
+                        `[Protected Cleanup] INDIVIDUAL DELETE FAILED | ` +
+                        `message=${msg.id}`,
                         error
                       );
 
@@ -871,7 +967,7 @@ async function deleteRecentUserMessages(
 
 
           /* =================================================
-             KIỂM TRA MESSAGE CŨ NHẤT
+             STOP WHEN OLDEST IS OUTSIDE 1 HOUR
           ================================================= */
 
           const oldest =
@@ -883,34 +979,25 @@ async function deleteRecentUserMessages(
           }
 
 
-          /*
-           * Nếu message cũ nhất trong batch đã cũ hơn
-           * cutoff thì không cần fetch tiếp.
-           */
-
           if (
             oldest.createdTimestamp <
             cutoff
           ) {
+
             break;
+
           }
 
-
-          /*
-           * Nếu chưa đủ 100 message thì đã tới cuối
-           * lịch sử channel.
-           */
 
           if (
-            fetched.size < 100
+            fetched.size <
+            100
           ) {
+
             break;
+
           }
 
-
-          /*
-           * Tiếp tục lấy batch kế tiếp.
-           */
 
           before =
             oldest.id;
@@ -921,8 +1008,8 @@ async function deleteRecentUserMessages(
       } catch (channelError) {
 
         logger.warn(
-          `[Protected Cleanup] Lỗi xử lý channel ` +
-          `${channel?.id || 'unknown'}:`,
+          `[Protected Cleanup] CHANNEL ERROR | ` +
+          `channel=${channel?.id || 'unknown'}`,
           channelError
         );
 
@@ -932,15 +1019,16 @@ async function deleteRecentUserMessages(
 
 
     logger.info(
-      `[Protected Cleanup] Hoàn tất quét message ` +
-      `của ${userId}.`
+      `[Protected Cleanup] COMPLETE | ` +
+      `user=${userId} | ` +
+      `deleted=${totalDeleted}`
     );
 
 
   } catch (error) {
 
     logger.error(
-      '[Protected Cleanup] Unexpected Error:',
+      '[Protected Cleanup] UNEXPECTED ERROR:',
       error
     );
 
