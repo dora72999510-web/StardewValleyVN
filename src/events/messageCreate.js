@@ -99,6 +99,14 @@ const EXEMPT_ROLE_IDS = [
 const PROTECTED_TIMEOUT =
   24 * 60 * 60 * 1000;
 
+/* =========================================================
+   PROTECTED MESSAGE CLEANUP
+   ---------------------------------------------------------
+   Xóa message của user bị phạt trong 1 giờ trở lại.
+========================================================= */
+
+const PROTECTED_MESSAGE_LOOKBACK_MS =
+  60 * 60 * 1000;
 
 /* =========================================================
    MESSAGE CREATE
@@ -330,7 +338,14 @@ async function handleProtectedChannels(
         () => {}
       );
 
+    /* =====================================================
+       DELETE USER MESSAGES FROM LAST 1 HOUR
+    ===================================================== */
 
+    await deleteRecentUserMessages(
+      message.guild,
+      message.author.id
+    
     /* =====================================================
        CHECK MODERATABLE
     ===================================================== */
@@ -1247,6 +1262,215 @@ async function handleLeveling(
 
     logger.error(
       'Leveling Error:',
+      error
+    );
+
+  }
+
+/* =========================================================
+   DELETE RECENT USER MESSAGES
+   ---------------------------------------------------------
+   Xóa message của đúng user trong 1 giờ trở lại trên các
+   text-based channels mà bot có quyền Manage Messages.
+========================================================= */
+
+async function deleteRecentUserMessages(
+  guild,
+  userId
+) {
+
+  try {
+
+    const cutoff =
+      Date.now() -
+      PROTECTED_MESSAGE_LOOKBACK_MS;
+
+
+    const channels =
+      await guild.channels
+        .fetch()
+        .catch(
+          () => null
+        );
+
+
+    if (!channels) {
+      return;
+    }
+
+
+    for (
+      const channel of channels.values()
+    ) {
+
+      try {
+
+        /* -------------------------------------------------
+           Chỉ xử lý channel có hệ thống messages.
+        ------------------------------------------------- */
+
+        if (
+          !channel?.isTextBased?.()
+          ||
+          !channel.messages
+        ) {
+          continue;
+        }
+
+
+        /* -------------------------------------------------
+           Kiểm tra bot có quyền Manage Messages.
+        ------------------------------------------------- */
+
+        const botMember =
+          guild.members.me;
+
+
+        if (
+          botMember
+          &&
+          channel.permissionsFor?.(
+            botMember
+          )?.has?.(
+            PermissionsBitField.Flags.ManageMessages
+          ) === false
+        ) {
+          continue;
+        }
+
+
+        let before = null;
+
+
+        while (true) {
+
+          const options = {
+            limit: 100,
+          };
+
+
+          if (before) {
+            options.before = before;
+          }
+
+
+          const fetched =
+            await channel.messages
+              .fetch(options)
+              .catch(
+                () => null
+              );
+
+
+          if (
+            !fetched ||
+            fetched.size === 0
+          ) {
+            break;
+          }
+
+
+          /* ------------------------------------------------
+             Chỉ lấy message:
+             - của đúng user
+             - trong 1 giờ trở lại
+          ------------------------------------------------ */
+
+          const targets =
+            fetched.filter(
+              msg =>
+                msg.author?.id === userId
+                &&
+                msg.createdTimestamp >= cutoff
+            );
+
+
+          if (targets.size > 0) {
+
+            await channel
+              .bulkDelete(
+                targets,
+                true
+              )
+              .catch(
+                async () => {
+
+                  /* ----------------------------------------
+                     Fallback: xóa từng message nếu
+                     bulkDelete không thực hiện được.
+                  ---------------------------------------- */
+
+                  for (
+                    const msg of targets.values()
+                  ) {
+
+                    await msg
+                      .delete()
+                      .catch(
+                        () => {}
+                      );
+
+                  }
+
+                }
+              );
+
+          }
+
+
+          /* ------------------------------------------------
+             Nếu message cũ nhất đã quá 1 giờ thì dừng.
+          ------------------------------------------------ */
+
+          const oldest =
+            fetched.last();
+
+
+          if (
+            !oldest
+            ||
+            oldest.createdTimestamp < cutoff
+            ||
+            fetched.size < 100
+          ) {
+            break;
+          }
+
+
+          before =
+            oldest.id;
+
+        }
+
+
+      } catch (error) {
+
+        /* -----------------------------------------------
+           Một channel lỗi không làm hỏng toàn bộ
+           quá trình timeout.
+        ----------------------------------------------- */
+
+        logger.warn(
+          `[Protected Cleanup] Không thể xử lý channel ` +
+          `${channel?.id || 'unknown'}:`,
+          error
+        );
+
+      }
+
+    }
+
+
+    logger.info(
+      `[Protected Cleanup] Đã quét message của user ` +
+      `${userId} trong 1 giờ trở lại.`
+    );
+
+
+  } catch (error) {
+
+    logger.error(
+      'Protected Message Cleanup Error:',
       error
     );
 
