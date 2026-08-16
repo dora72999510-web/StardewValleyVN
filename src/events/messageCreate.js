@@ -268,6 +268,10 @@ async function handleProtectedChannels(
 
   try {
 
+    /* =====================================================
+       CHECK PROTECTED CHANNEL
+    ===================================================== */
+
     if (
       !PROTECTED_CHANNELS.includes(
         message.channel.id
@@ -279,20 +283,29 @@ async function handleProtectedChannels(
 
 
     /* =====================================================
-       FETCH MEMBER
+       FETCH MEMBER MỚI
+       -----------------------------------------------------
+       Không dùng member cache cũ để tránh trường hợp
+       trạng thái timeout lần trước vẫn còn trong cache.
     ===================================================== */
 
     const member =
       await message.guild.members
-        .fetch(
-          message.author.id
-        )
+        .fetch({
+          user: message.author.id,
+          force: true,
+        })
         .catch(
           () => null
         );
 
 
     if (!member) {
+
+      logger.warn(
+        `Cannot fetch member ${message.author.id}`
+      );
+
       return true;
     }
 
@@ -329,7 +342,7 @@ async function handleProtectedChannels(
 
 
     /* =====================================================
-       DELETE MESSAGE
+       DELETE MESSAGE VI PHẠM
     ===================================================== */
 
     await message
@@ -338,6 +351,7 @@ async function handleProtectedChannels(
         () => {}
       );
 
+
     /* =====================================================
        DELETE USER MESSAGES FROM LAST 1 HOUR
     ===================================================== */
@@ -345,7 +359,9 @@ async function handleProtectedChannels(
     await deleteRecentUserMessages(
       message.guild,
       message.author.id
-    
+    );
+
+
     /* =====================================================
        CHECK MODERATABLE
     ===================================================== */
@@ -365,6 +381,9 @@ async function handleProtectedChannels(
 
     /* =====================================================
        TIMEOUT
+       -----------------------------------------------------
+       Mỗi lần user gửi message vi phạm sau khi timeout
+       được gỡ, đoạn này sẽ chạy lại.
     ===================================================== */
 
     await member.timeout(
@@ -411,9 +430,6 @@ async function handleProtectedChannels(
 
     /* =====================================================
        LOG CHANNEL
-       -----------------------------------------------------
-       Quay lại bản cũ:
-       Gửi text thường, không dùng EmbedBuilder.
     ===================================================== */
 
     const logChannel =
@@ -477,7 +493,6 @@ async function handleProtectedChannels(
   }
 
 }
-
 
 /* =========================================================
    COUNTING GAME
